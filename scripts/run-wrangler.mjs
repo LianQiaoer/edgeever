@@ -312,14 +312,17 @@ if (isRemoteCommand && config.includes(`database_id = "${PLACEHOLDER_D1_ID}"`)) 
   process.exit(1);
 }
 
-const configPath = changed ? generatedConfigPath : baseConfigPath;
-  config = config.replace(/\[\[r2_buckets\]\][\s\S]*?(?=\n\[|\n$)/g, "");
-  writeFileSync(generatedConfigPath, config);
-} else {
-  const cleanConfig = config.replace(/\[\[r2_buckets\]\][\s\S]*?(?=\n\[|\n$)/g, "");
-  writeFileSync(generatedConfigPath, cleanConfig);
+const configPath = generatedConfigPath;
+if (changed) {
+  config = config.replace(
+    /^migrations_dir\s*=\s*"[^"]+"/m,
+    `migrations_dir = ${tomlString(
+      (migrationCommand ? generatedMigrationsConfigDirectory : migrationsDirectory).replaceAll("\\", "/"),
+    )}`,
+  );
 }
-const effectiveConfigPath = generatedConfigPath;
+config = config.replace(/\[\[r2_buckets\]\][\s\S]*?(?=\n\[|\n$)/g, "");
+writeFileSync(generatedConfigPath, config);
 
 const isDeployCommand = wranglerArgs.includes("deploy");
 const captureDeploymentTargets = isDeployCommand && shouldCaptureDeploymentTargets();
