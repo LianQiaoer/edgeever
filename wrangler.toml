@@ -1,4 +1,4 @@
-name = "main"
+name = "edgeever"
 main = ".wrangler/edgeever-worker/index.js"
 compatibility_date = "2026-06-26"
 workers_dev = true
@@ -24,7 +24,7 @@ run_worker_first = ["/api/*", "/mcp", "/__scheduled"]
 [[d1_databases]]
 binding = "DB"
 database_name = "edgeever"
-database_id = "c899e7cb-9f31-45b2-af66-86e3d8f95f91"
+database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "migrations"
 
 [[r2_buckets]]

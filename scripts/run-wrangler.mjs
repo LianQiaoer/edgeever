@@ -312,17 +312,19 @@ if (isRemoteCommand && config.includes(`database_id = "${PLACEHOLDER_D1_ID}"`)) 
   process.exit(1);
 }
 
-const configPath = generatedConfigPath;
+const configPath = changed ? generatedConfigPath : baseConfigPath;
 if (changed) {
+  // Wrangler resolves migrations_dir relative to its config. Use an absolute,
+  // slash-normalized path so generated configs behave consistently in Windows
+  // Git Bash, PowerShell, Linux, and macOS.
   config = config.replace(
     /^migrations_dir\s*=\s*"[^"]+"/m,
     `migrations_dir = ${tomlString(
       (migrationCommand ? generatedMigrationsConfigDirectory : migrationsDirectory).replaceAll("\\", "/"),
     )}`,
   );
+  writeFileSync(generatedConfigPath, config);
 }
-config = config.replace(/\[\[r2_buckets\]\][\s\S]*?(?=\n\[|\n$)/g, "");
-writeFileSync(generatedConfigPath, config);
 
 const isDeployCommand = wranglerArgs.includes("deploy");
 const captureDeploymentTargets = isDeployCommand && shouldCaptureDeploymentTargets();
@@ -336,9 +338,6 @@ const authSecrets = {
   ...(authPasswordHash ? { EDGE_EVER_AUTH_PASSWORD_HASH: authPasswordHash } : {}),
 };
 const finalWranglerArgs = [...wranglerArgs];
-if (!process.env.EDGE_EVER_USE_EXISTING_AUTH_SECRET) {
-  process.env.EDGE_EVER_USE_EXISTING_AUTH_SECRET = "true";
-}
 const useExistingAuthSecret = process.env.EDGE_EVER_USE_EXISTING_AUTH_SECRET?.trim().toLowerCase() === "true";
 
 if (isDeployCommand && Object.keys(authSecrets).length === 0 && !useExistingAuthSecret) {
@@ -366,7 +365,7 @@ if (captureDeploymentTargets) {
   rmSync(deploymentTargetsPath, { force: true });
 }
 
-const result = runWranglerSync(["--config", generatedConfigPath, ...finalWranglerArgs], {
+const result = runWranglerSync(["--config", configPath, ...finalWranglerArgs], {
   cwd: resolve("."),
   encoding: captureDeploymentTargets ? "utf8" : undefined,
   env: process.env,
