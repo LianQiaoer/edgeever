@@ -404,7 +404,7 @@ if (isRemoteCommand && config.includes(`database_id = "${PLACEHOLDER_D1_ID}"`)) 
   process.exit(1);
 }
 
-const configPath = changed ? generatedConfigPath : baseConfigPath;
+const configPath = generatedConfigPath;
 if (changed) {
   // Wrangler resolves migrations_dir relative to its config. Use an absolute,
   // slash-normalized path so generated configs behave consistently in Windows
@@ -417,6 +417,20 @@ if (changed) {
   );
   writeFileSync(generatedConfigPath, config);
 }
+
+// Self-hosted deployments without an R2 bucket must not publish an R2 binding.
+// Strip the [[r2_buckets]] block before Wrangler reads the generated config so
+// deploy never references a bucket that does not exist in the account
+// (Cloudflare error 10042). D1-backed notes keep working; R2-backed attachments
+// fall back to the storage adapter's unavailable store.
+const r2Section = config.indexOf("[[r2_buckets]]");
+if (r2Section !== -1) {
+  const nextSection = config.indexOf(String.fromCharCode(10) + "[[", r2Section + "[[r2_buckets]]".length);
+  config = nextSection === -1
+    ? config.slice(0, r2Section).trimEnd()
+    : config.slice(0, r2Section) + config.slice(nextSection + 1);
+}
+writeFileSync(generatedConfigPath, config);
 
 const captureDeploymentTargets = isDeployCommand && shouldCaptureDeploymentTargets();
 const deploymentTargetsPath = resolve(DEPLOYMENT_TARGETS_PATH);

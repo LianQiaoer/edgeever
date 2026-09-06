@@ -231,6 +231,13 @@ jobs:
             node "${helper_path}" prepare
           echo "Prepared ${ALIGN_MODE} update from ${TARGET_REF} (${TARGET_COMMIT:0:12}) because ${REASON}."
 
+      - name: Apply no-R2 deployment transform
+        if: steps.upstream.outputs.update_required == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node .github/workflows/no-r2-transform.mjs
+
       - name: Set up Bun
         if: steps.upstream.outputs.align_mode == 'merge'
         uses: oven-sh/setup-bun@v2
@@ -286,7 +293,10 @@ jobs:
              ! git diff --quiet "${TARGET_COMMIT}" HEAD -- . \
                ':(exclude).github/workflows/**' \
                ':(exclude)scripts/prepare-upstream-sync.mjs' \
-               ':(exclude)scripts/upstream-sync-plan.mjs'; then
+               ':(exclude)scripts/upstream-sync-plan.mjs' \
+               ':(exclude)scripts/run-wrangler.mjs' \
+               ':(exclude)apps/api/src/cloudflare-storage-adapter.ts' \
+               ':(exclude)apps/api/src/storage-contract.ts'; then
             echo "Prepared product tree does not match ${TARGET_REF}." >&2
             exit 1
           fi
