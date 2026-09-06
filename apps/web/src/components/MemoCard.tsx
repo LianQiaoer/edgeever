@@ -83,6 +83,9 @@ export const MemoCard = ({
   const [modifierHoverActive, setModifierHoverActive] = useState(false);
   const memoTitle = memo.title?.trim() && !isDefaultMemoTitle(memo.title) ? memo.title.trim() : t("common.untitledMemo");
   const memoExcerpt = memo.excerpt.trim() || t("memoCard.emptyMemo");
+  const diagramLabel = memo.diagramKind
+    ? t(`diagram.${memo.diagramKind === "mind-map" ? "mindMap" : memo.diagramKind}`)
+    : null;
   const listTimestamp = getMemoListTimestamp(memo, sortMode);
   const listTimestampLabel = formatMemoPreviewDate(
     listTimestamp.value,
@@ -388,14 +391,22 @@ export const MemoCard = ({
             {memo.isPinned && <Star className="h-4 w-4 shrink-0 fill-amber-400 text-amber-500" />}
             <span className="min-w-0 truncate">{memoTitle}</span>
           </div>
-          <div
-            className={cn(
-              "line-clamp-2 min-h-10 text-[13px] leading-relaxed text-slate-600 dark:text-slate-400",
-              listDensity === "compact" && "line-clamp-1 min-h-0 text-[12.5px]"
-            )}
-          >
-            {memoExcerpt}
-          </div>
+          {diagramLabel ? (
+            <div className={cn("flex min-h-10 items-start", listDensity === "compact" && "min-h-0")}>
+              <span className="inline-flex rounded-[3px] border border-slate-200/80 bg-slate-50/80 px-1.5 py-0 text-xs font-normal leading-[15px] text-slate-500 dark:border-slate-700/70 dark:bg-slate-800/40 dark:text-slate-400">
+                {diagramLabel}
+              </span>
+            </div>
+          ) : (
+            <div
+              className={cn(
+                "line-clamp-2 min-h-10 text-[13px] leading-relaxed text-slate-600 dark:text-slate-400",
+                listDensity === "compact" && "line-clamp-1 min-h-0 text-[12.5px]"
+              )}
+            >
+              {memoExcerpt}
+            </div>
+          )}
           <div className={cn("mt-3.5 flex flex-wrap items-center gap-2", listDensity === "compact" && "mt-1.5")}>
             <time className="text-xs font-normal text-slate-500 dark:text-slate-400" dateTime={listTimestamp.value}>
               {listTimestamp.field === "createdAt"

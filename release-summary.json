@@ -1,11 +1,13 @@
 {
-  "version": "1.59.0",
+  "version": "1.60.0",
   "changes": {
     "en-US": [
-      "Add visual architecture diagram notes with semantic components, system boundaries, labeled connections, automatic layout, revision history, and PNG/SVG export on Web and desktop; Android and iOS preserve the same data and provide a semantic read-only view."
+      "Improve architecture diagram viewing and editing across platforms: render diagrams with X6 on mobile, add richer components and clearer diagram labels on Web and desktop, unify expansion and save feedback, and keep diagram metadata out of regular notes.",
+      "Fix desktop sync failures caused by merged memo ordering and foreign-key constraints."
     ],
     "zh-CN": [
-      "新增可视化架构图笔记：Web 与桌面端支持语义组件、系统边界、连线说明、自动布局、历史版本及 PNG/SVG 导出；Android 与 iOS 保留同一份数据并提供语义化只读视图。"
+      "增强架构图在各端的浏览与编辑体验：移动端使用 X6 渲染，Web 与桌面端提供更丰富的组件和更清晰的图表标识，统一展开与保存反馈，并避免图表元数据出现在普通笔记中。",
+      "修复桌面端合并备忘录顺序导致的外键约束同步失败。"
     ]
   }
 }

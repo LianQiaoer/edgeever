@@ -1,40 +1,75 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Export, Graph, History, Keyboard, Selection, type Edge, type Node } from "@antv/x6";
+import * as m from "motion/react-m";
 import {
+  Activity,
+  AppWindow,
+  Blocks,
   Box,
   Boxes,
+  BrickWall,
+  Cable,
   Check,
+  ChartNoAxesCombined,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Circle,
   CircleAlert,
+  Cloud,
+  CloudCog,
+  CloudUpload,
+  Code2,
+  Container,
   Copy,
+  Cpu,
   Diamond,
   Database,
+  DatabaseZap,
   Download,
+  EthernetPort,
   FileCode2,
+  FileClock,
   FileImage,
+  FileStack,
+  FolderArchive,
+  Gauge,
   GitBranch,
   Globe2,
   HardDrive,
   History as HistoryIcon,
   LayoutDashboard,
+  KeyRound,
+  Layers3,
+  ListTree,
   Link2,
+  LockKeyhole,
   LoaderCircle,
   Maximize2,
   Minimize2,
   MoreHorizontal,
+  MonitorSmartphone,
   Network,
   Pencil,
+  RadioTower,
   Redo2,
   RefreshCw,
   RotateCcw,
+  Router,
+  Search,
   Server,
   ShieldCheck,
+  ShieldEllipsis,
+  Smartphone,
+  SquareFunction,
   Trash2,
   Undo2,
+  Webhook,
+  Workflow,
+  Zap,
   ZoomIn,
   ZoomOut,
+  type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
@@ -44,6 +79,7 @@ import {
   markdownToDoc,
   parseDiagramDocument,
   serializeDiagramDocument,
+  type ArchitectureResourceIcon,
   type DiagramDocument,
   type DiagramEdgeKind,
   type DiagramNodeShape,
@@ -57,6 +93,7 @@ import { AppConfirmDialog } from "@/components/dialogs/ConfirmDialogs";
 import { RevisionHistoryDialog } from "@/components/dialogs/RevisionHistoryDialog";
 import { ShareMemoDialog } from "@/components/dialogs/ShareMemoDialog";
 import { ClipboardCopyNotice } from "@/components/ClipboardCopyNotice";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -69,6 +106,7 @@ import { compactArchitectureNodeSize, compactFlowchartNodeSize, compactMindMapNo
 import { resolveDiagramPalette, type DiagramAppearance } from "@/lib/diagram-theme";
 import { isLocalMemoId } from "@/lib/local-mirror";
 import { isBrowserOffline } from "@/lib/network-status";
+import { statusSettleMotion } from "@/lib/motion";
 import type { EdgeEverRepository } from "@/lib/repository";
 import { cn, formatDateTime } from "@/lib/utils";
 
@@ -90,7 +128,7 @@ type DiagramEditorPaneProps = {
   onToggleDesktopFocusMode: () => void;
 };
 
-type NodeData = { label: string; shape: DiagramNodeShape; parentId?: string };
+type NodeData = { label: string; shape: DiagramNodeShape; parentId?: string; resourceIcon?: ArchitectureResourceIcon };
 type EdgeData = { kind?: DiagramEdgeKind; bidirectional?: boolean };
 type MindMapInsertRelation = "child" | "sibling";
 type FlowPort = "top" | "right" | "bottom" | "left";
@@ -123,6 +161,266 @@ type NodeEditorState = {
   color: string;
   background: string;
   borderColor: string;
+};
+
+type ArchitectureLibraryItem = {
+  icon: LucideIcon;
+  labelKey: `diagram.architectureResources.${ArchitectureResourceIcon}`;
+  shape: DiagramNodeShape;
+};
+
+const ARCHITECTURE_LIBRARY_CATEGORIES: Array<{
+  id: string;
+  labelKey: string;
+  tone: string;
+  items: ArchitectureLibraryItem[];
+}> = [
+  {
+    id: "applications",
+    labelKey: "diagram.componentCategoryExperience",
+    tone: "text-cyan-600",
+    items: [
+      { shape: "client", icon: MonitorSmartphone, labelKey: "diagram.architectureResources.client" },
+      { shape: "frontend", icon: AppWindow, labelKey: "diagram.architectureResources.webApp" },
+      { shape: "client", icon: Smartphone, labelKey: "diagram.architectureResources.mobileApp" },
+      { shape: "frontend", icon: Globe2, labelKey: "diagram.architectureResources.website" },
+      { shape: "client", icon: Code2, labelKey: "diagram.architectureResources.apiClient" },
+    ],
+  },
+  {
+    id: "compute",
+    labelKey: "diagram.componentCategoryServices",
+    tone: "text-emerald-600",
+    items: [
+      { shape: "service", icon: Server, labelKey: "diagram.architectureResources.service" },
+      { shape: "service", icon: Cpu, labelKey: "diagram.architectureResources.virtualMachine" },
+      { shape: "service", icon: Container, labelKey: "diagram.architectureResources.container" },
+      { shape: "service", icon: Blocks, labelKey: "diagram.architectureResources.kubernetes" },
+      { shape: "service", icon: SquareFunction, labelKey: "diagram.architectureResources.serverless" },
+    ],
+  },
+  {
+    id: "data",
+    labelKey: "diagram.componentCategoryDatabases",
+    tone: "text-violet-600",
+    items: [
+      { shape: "database", icon: Database, labelKey: "diagram.architectureResources.relationalDatabase" },
+      { shape: "database", icon: DatabaseZap, labelKey: "diagram.architectureResources.noSqlDatabase" },
+      { shape: "database", icon: Layers3, labelKey: "diagram.architectureResources.cache" },
+      { shape: "database", icon: ChartNoAxesCombined, labelKey: "diagram.architectureResources.dataWarehouse" },
+      { shape: "database", icon: Search, labelKey: "diagram.architectureResources.searchEngine" },
+    ],
+  },
+  {
+    id: "storage",
+    labelKey: "diagram.componentCategoryStorage",
+    tone: "text-lime-600",
+    items: [
+      { shape: "storage", icon: Cloud, labelKey: "diagram.architectureResources.objectStorage" },
+      { shape: "storage", icon: FileStack, labelKey: "diagram.architectureResources.fileStorage" },
+      { shape: "storage", icon: HardDrive, labelKey: "diagram.architectureResources.blockStorage" },
+      { shape: "storage", icon: FolderArchive, labelKey: "diagram.architectureResources.backup" },
+      { shape: "storage", icon: CloudUpload, labelKey: "diagram.architectureResources.cdn" },
+    ],
+  },
+  {
+    id: "middleware",
+    labelKey: "diagram.componentCategoryMiddleware",
+    tone: "text-orange-600",
+    items: [
+      { shape: "queue", icon: GitBranch, labelKey: "diagram.architectureResources.messageQueue" },
+      { shape: "queue", icon: Workflow, labelKey: "diagram.architectureResources.eventBus" },
+      { shape: "queue", icon: RadioTower, labelKey: "diagram.architectureResources.streamProcessing" },
+      { shape: "service", icon: Webhook, labelKey: "diagram.architectureResources.webhook" },
+      { shape: "service", icon: ListTree, labelKey: "diagram.architectureResources.serviceMesh" },
+    ],
+  },
+  {
+    id: "network",
+    labelKey: "diagram.componentCategoryNetwork",
+    tone: "text-blue-600",
+    items: [
+      { shape: "service", icon: Router, labelKey: "diagram.architectureResources.apiGateway" },
+      { shape: "service", icon: Activity, labelKey: "diagram.architectureResources.loadBalancer" },
+      { shape: "external", icon: Globe2, labelKey: "diagram.architectureResources.dns" },
+      { shape: "boundary", icon: Network, labelKey: "diagram.architectureResources.vpc" },
+      { shape: "boundary", icon: Cable, labelKey: "diagram.architectureResources.subnet" },
+      { shape: "security", icon: EthernetPort, labelKey: "diagram.architectureResources.vpn" },
+    ],
+  },
+  {
+    id: "security",
+    labelKey: "diagram.componentCategorySecurity",
+    tone: "text-rose-600",
+    items: [
+      { shape: "security", icon: KeyRound, labelKey: "diagram.architectureResources.identity" },
+      { shape: "security", icon: BrickWall, labelKey: "diagram.architectureResources.firewall" },
+      { shape: "security", icon: ShieldCheck, labelKey: "diagram.architectureResources.waf" },
+      { shape: "security", icon: LockKeyhole, labelKey: "diagram.architectureResources.secretManager" },
+      { shape: "security", icon: ShieldEllipsis, labelKey: "diagram.architectureResources.certificate" },
+      { shape: "boundary", icon: Box, labelKey: "diagram.architectureResources.systemBoundary" },
+    ],
+  },
+  {
+    id: "observability",
+    labelKey: "diagram.componentCategoryObservability",
+    tone: "text-teal-600",
+    items: [
+      { shape: "service", icon: Gauge, labelKey: "diagram.architectureResources.monitoring" },
+      { shape: "service", icon: FileClock, labelKey: "diagram.architectureResources.logging" },
+      { shape: "service", icon: ChartNoAxesCombined, labelKey: "diagram.architectureResources.metrics" },
+      { shape: "service", icon: Activity, labelKey: "diagram.architectureResources.tracing" },
+      { shape: "service", icon: CircleAlert, labelKey: "diagram.architectureResources.alerting" },
+    ],
+  },
+  {
+    id: "external",
+    labelKey: "diagram.componentCategoryExternal",
+    tone: "text-slate-600",
+    items: [
+      { shape: "external", icon: CloudCog, labelKey: "diagram.architectureResources.saas" },
+      { shape: "external", icon: Webhook, labelKey: "diagram.architectureResources.externalApi" },
+      { shape: "external", icon: Zap, labelKey: "diagram.architectureResources.thirdPartyService" },
+    ],
+  },
+];
+
+const architectureResourceIcon = (item: ArchitectureLibraryItem) =>
+  item.labelKey.slice("diagram.architectureResources.".length) as ArchitectureResourceIcon;
+
+const ARCHITECTURE_RESOURCE_ICON_COMPONENTS = Object.fromEntries(
+  ARCHITECTURE_LIBRARY_CATEGORIES.flatMap((category) => category.items)
+    .map((item) => [architectureResourceIcon(item), item.icon]),
+) as Record<ArchitectureResourceIcon, LucideIcon>;
+
+const ARCHITECTURE_LIBRARY_ITEMS = ARCHITECTURE_LIBRARY_CATEGORIES.flatMap((category) => category.items);
+
+const inferArchitectureResourceIcon = (
+  label: string,
+  t: (key: string) => string,
+) => {
+  const item = ARCHITECTURE_LIBRARY_ITEMS.find((candidate) => t(candidate.labelKey) === label);
+  return item ? architectureResourceIcon(item) : undefined;
+};
+
+const ArchitectureComponentLibrary = ({
+  onAdd,
+  t,
+}: {
+  onAdd: (item: ArchitectureLibraryItem) => void;
+  t: (key: string) => string;
+}) => {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const categories = ARCHITECTURE_LIBRARY_CATEGORIES.map((category) => ({
+    ...category,
+    items: category.items.filter((item) => t(item.labelKey).toLocaleLowerCase().includes(normalizedQuery)),
+  })).filter((category) => category.items.length > 0);
+
+  return (
+    <DropdownMenu open={open} onOpenChange={(nextOpen) => {
+      setOpen(nextOpen);
+      if (!nextOpen) setQuery("");
+    }}>
+      <DropdownMenuTrigger asChild>
+        <Button size="sm" variant="outline" onPointerEnter={() => setOpen(true)}>
+          <Boxes className="h-4 w-4" />{t("diagram.componentLibrary")}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="max-h-[min(36rem,calc(100vh-8rem))] w-[min(30rem,calc(100vw-2rem))] overflow-y-auto p-0">
+        <div className="sticky top-0 z-10 border-b border-slate-200 bg-white p-2.5">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Input
+              autoFocus
+              className="h-9 pl-9"
+              value={query}
+              placeholder={t("diagram.componentSearch")}
+              aria-label={t("diagram.componentSearch")}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => event.stopPropagation()}
+            />
+          </div>
+        </div>
+        <div className="p-1.5">
+          {categories.length > 0 ? categories.map((category) => (
+            <Collapsible key={category.id} defaultOpen>
+              <DropdownMenuItem asChild onSelect={(event) => event.preventDefault()}>
+                <CollapsibleTrigger className="group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-green)]">
+                  <ChevronDown className="h-4 w-4 text-slate-400 transition-transform group-data-[state=closed]:-rotate-90" />
+                  {t(category.labelKey)}
+                </CollapsibleTrigger>
+              </DropdownMenuItem>
+              <CollapsibleContent>
+                <div className="grid grid-cols-7 gap-1 px-1 pb-2">
+                  {category.items.map((item) => {
+                    const Icon = item.icon;
+                    const label = t(item.labelKey);
+                    return (
+                      <Tooltip key={item.labelKey}>
+                        <TooltipTrigger asChild>
+                          <DropdownMenuItem
+                            aria-label={label}
+                            className={cn("flex h-10 w-10 cursor-pointer justify-center rounded-lg p-0 hover:bg-current/10 focus:bg-current/10", category.tone)}
+                            onSelect={() => {
+                              onAdd(item);
+                              setOpen(false);
+                            }}
+                          >
+                            <Icon className="h-5 w-5" />
+                          </DropdownMenuItem>
+                        </TooltipTrigger>
+                        <TooltipContent side="top">
+                          {label}
+                        </TooltipContent>
+                      </Tooltip>
+                    );
+                  })}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          )) : (
+            <div className="px-3 py-8 text-center text-sm text-slate-500">{t("diagram.noMatchingComponents")}</div>
+          )}
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+};
+
+const DiagramInsertMenu = ({
+  icon: TriggerIcon,
+  items,
+  label,
+}: {
+  icon: LucideIcon;
+  items: Array<{ icon: LucideIcon; label: string; onSelect: () => void }>;
+  label: string;
+}) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <Button size="sm" variant="soft" onPointerEnter={() => setOpen(true)}>
+          <TriggerIcon className="h-4 w-4" />
+          {label}
+          <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        {items.map((item) => {
+          const Icon = item.icon;
+          return (
+            <DropdownMenuItem key={item.label} onSelect={item.onSelect}>
+              <Icon className="h-4 w-4" />
+              {item.label}
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 };
 
 const FLOW_ACTIVE_NODE_CLASS = "edgeever-flow-node-active";
@@ -317,14 +615,53 @@ const architectureNodeVisuals = (
   shape: DiagramNodeShape,
   size: { width: number; height: number },
   appearance: DiagramAppearance,
+  resourceIcon?: ArchitectureResourceIcon,
 ) => {
   const accent = ARCHITECTURE_NODE_ACCENTS[shape] ?? "#64748B";
   const iconY = Math.round((size.height - 34) / 2);
+  const iconComponent = resourceIcon ? ARCHITECTURE_RESOURCE_ICON_COMPONENTS[resourceIcon] : undefined;
+  const iconNodes = iconComponent
+    ? (iconComponent as unknown as {
+        render: (props: Record<string, never>, ref: null) => {
+          props: { iconNode: Array<[string, Record<string, string>]> };
+        };
+      }).render({}, null).props.iconNode
+    : null;
+  const iconMarkup = iconNodes?.map(([tagName], index) => ({
+    tagName,
+    selector: `architectureIcon${index}`,
+  })) ?? [{ tagName: "path", selector: "architectureIcon" }];
+  const iconAttrs = iconNodes
+    ? Object.fromEntries(iconNodes.map(([, sourceAttrs], index) => {
+        const { key: _key, ...geometry } = sourceAttrs;
+        return [`architectureIcon${index}`, {
+          ...geometry,
+          transform: `translate(15 ${iconY + 5})`,
+          fill: "none",
+          stroke: accent,
+          strokeWidth: 1.8,
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+          pointerEvents: "none",
+        }];
+      }))
+    : {
+        architectureIcon: {
+          d: ARCHITECTURE_NODE_ICONS[shape],
+          transform: `translate(15 ${iconY + 5})`,
+          fill: "none",
+          stroke: accent,
+          strokeWidth: 1.8,
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+          pointerEvents: "none",
+        },
+      };
   return {
     markup: [
       { tagName: "rect", selector: "body" },
       { tagName: "rect", selector: "iconFrame" },
-      { tagName: "path", selector: "architectureIcon" },
+      ...iconMarkup,
       { tagName: "text", selector: "label" },
     ],
     attrs: {
@@ -339,16 +676,7 @@ const architectureNodeVisuals = (
         stroke: "none",
         pointerEvents: "none",
       },
-      architectureIcon: {
-        d: ARCHITECTURE_NODE_ICONS[shape],
-        transform: `translate(15 ${iconY + 5})`,
-        fill: "none",
-        stroke: accent,
-        strokeWidth: 1.8,
-        strokeLinecap: "round",
-        strokeLinejoin: "round",
-        pointerEvents: "none",
-      },
+      ...iconAttrs,
     },
   };
 };
@@ -402,7 +730,7 @@ const nodeMetadata = (
   const size = diagramNodeSize(node, kind);
   const hasPorts = isConnectableDiagram(kind) && node.shape !== "boundary";
   const architectureVisuals = kind === "architecture" && node.shape !== "boundary"
-    ? architectureNodeVisuals(node.shape, size, appearance)
+    ? architectureNodeVisuals(node.shape, size, appearance, node.resourceIcon)
     : null;
   return {
     id: node.id,
@@ -412,7 +740,12 @@ const nodeMetadata = (
     width: size.width,
     height: size.height,
     zIndex: node.shape === "boundary" ? 0 : 2,
-    data: { label: node.label, shape: node.shape, ...(node.parentId ? { parentId: node.parentId } : {}) } satisfies NodeData,
+    data: {
+      label: node.label,
+      shape: node.shape,
+      ...(node.parentId ? { parentId: node.parentId } : {}),
+      ...(node.resourceIcon ? { resourceIcon: node.resourceIcon } : {}),
+    } satisfies NodeData,
     ...(architectureVisuals ? { markup: architectureVisuals.markup } : {}),
     attrs: {
       body: visualAttrs.body,
@@ -488,6 +821,7 @@ const graphToDocument = (graph: Graph, kind: DiagramDocument["kind"], theme: Dia
       height: Math.round(size.height),
       shape: data?.shape ?? "process",
       ...(data?.parentId && graph.getCellById(data.parentId)?.isNode() ? { parentId: data.parentId } : {}),
+      ...(data?.resourceIcon ? { resourceIcon: data.resourceIcon } : {}),
     };
   }),
   edges: graph.getEdges().flatMap((edge) => {
@@ -593,9 +927,10 @@ const applyGraphPalette = (
       node.attr("body", attrs.body);
       node.attr("label", { ...attrs.label, text: data?.label ?? "" });
       if (kind === "architecture" && shape !== "boundary") {
-        const architectureVisuals = architectureNodeVisuals(shape, node.getSize(), appearance);
-        node.attr("iconFrame", architectureVisuals.attrs.iconFrame);
-        node.attr("architectureIcon", architectureVisuals.attrs.architectureIcon);
+        const architectureVisuals = architectureNodeVisuals(shape, node.getSize(), appearance, data?.resourceIcon);
+        for (const [selector, selectorAttrs] of Object.entries(architectureVisuals.attrs)) {
+          node.attr(selector, selectorAttrs);
+        }
       }
       for (const port of node.getPorts()) {
         if (!port.id) continue;
@@ -843,7 +1178,15 @@ export const DiagramEditorPane = ({
       },
     }));
     graph.use(new Selection({ enabled: true, multiple: true, rubberband: true, movable: !readOnly, showNodeSelectionBox: true, showEdgeSelectionBox: true }));
-    graph.addNodes(document.nodes.map((node) => nodeMetadata(node, documentTheme, document.kind, appearance)));
+    graph.addNodes(document.nodes.map((node) => {
+      const inferredResourceIcon = document.kind === "architecture" && !node.resourceIcon
+        ? inferArchitectureResourceIcon(node.label, t)
+        : undefined;
+      return nodeMetadata({
+        ...node,
+        ...(inferredResourceIcon ? { resourceIcon: inferredResourceIcon } : {}),
+      }, documentTheme, document.kind, appearance);
+    }));
     if (document.kind === "architecture") {
       for (const node of graph.getNodes()) {
         const parentId = node.getData<NodeData>()?.parentId;
@@ -1117,6 +1460,7 @@ export const DiagramEditorPane = ({
             height: node.getSize().height,
             shape: data?.shape ?? "process",
             ...(data?.parentId ? { parentId: data.parentId } : {}),
+            ...(data?.resourceIcon ? { resourceIcon: data.resourceIcon } : {}),
           }, themeRef.current, document.kind, appearanceRef.current));
           const parent = data?.parentId ? graph.getCellById(data.parentId) : null;
           if (parent?.isNode()) parent.addChild(duplicate);
@@ -1226,7 +1570,13 @@ export const DiagramEditorPane = ({
 
   const addNode = useCallback((
     shape: DiagramNodeShape = "process",
-    options: { relation?: MindMapInsertRelation; baseNodeId?: string; beginEditing?: boolean } = {},
+    options: {
+      relation?: MindMapInsertRelation;
+      baseNodeId?: string;
+      beginEditing?: boolean;
+      label?: string;
+      resourceIcon?: ArchitectureResourceIcon;
+    } = {},
   ) => {
     const graph = graphRef.current;
     if (!graph || !document || readOnly) return;
@@ -1272,7 +1622,7 @@ export const DiagramEditorPane = ({
     graph.startBatch("add");
     const node = graph.addNode(nodeMetadata({
       id,
-      label: isMindMap ? t("diagram.newTopic") : isArchitecture ? architectureNodeLabel(shape, t) : t("diagram.newStep"),
+      label: options.label ?? (isMindMap ? t("diagram.newTopic") : isArchitecture ? architectureNodeLabel(shape, t) : t("diagram.newStep")),
       x: nextPosition.x,
       y: nextPosition.y,
       width: authoredSize.width,
@@ -1280,6 +1630,7 @@ export const DiagramEditorPane = ({
       shape: isMindMap ? "topic" : shape,
       ...(isMindMap && parent?.isNode() ? { parentId: parent.id } : {}),
       ...(architectureParentId ? { parentId: architectureParentId } : {}),
+      ...(isArchitecture && options.resourceIcon ? { resourceIcon: options.resourceIcon } : {}),
     }, themeRef.current, document.kind, appearanceRef.current));
     if (architectureParentId) {
       const architectureParent = graph.getCellById(architectureParentId);
@@ -1589,6 +1940,19 @@ export const DiagramEditorPane = ({
   const currentMarkdown = historyOpen
     ? serializeDiagramDocument(graphRef.current ? graphToDocument(graphRef.current, document.kind, themeRef.current) : document)
     : memo.contentMarkdown;
+  const saveStatus = saveError ? "error" : saving ? "saving" : dirty ? "unsaved" : "saved";
+  const saveLabel = saveStatus === "error"
+    ? t("editor.saveState.error")
+    : saveStatus === "saving"
+      ? t("editor.saveState.saving")
+      : saveStatus === "unsaved"
+        ? t("editor.saveState.unsaved")
+        : t("editor.saveState.saved");
+  const saveStatusClassName = saveStatus === "error"
+    ? "bg-rose-50 text-rose-700"
+    : saveStatus === "saved"
+      ? "bg-slate-100 text-slate-500"
+      : "bg-emerald-50 text-emerald-700";
 
   return (
     <TooltipProvider>
@@ -1652,19 +2016,41 @@ export const DiagramEditorPane = ({
           </div>
 
           <div className="flex shrink-0 items-center gap-1">
-            <span className={cn(
+            <m.span
+              key={`mobile-${saveStatus}`}
+              className={cn(
               "inline-flex max-w-[5.5rem] truncate rounded-full px-2 py-1 text-[11px] font-medium sm:hidden",
-              saveError ? "bg-rose-50 text-rose-700" : dirty || saving ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700",
-            )} role="status" aria-live="polite">
-              {saveError ?? (dirty || saving ? t("diagram.saving") : t("diagram.saved"))}
-            </span>
-            <span className={cn(
+              saveStatusClassName,
+            )}
+              role="status"
+              aria-live="polite"
+              aria-label={saveError ? `${saveLabel}. ${saveError}` : undefined}
+              {...statusSettleMotion}
+            >
+              {saveLabel}
+            </m.span>
+            <m.span
+              key={saveStatus}
+              className={cn(
               "hidden items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium sm:inline-flex",
-              saveError ? "bg-rose-50 text-rose-700" : dirty || saving ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700",
-            )} role="status" aria-live="polite">
-              {saveError ? <CircleAlert className="h-3 w-3" /> : dirty || saving ? <LoaderCircle className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-              {saveError ?? (dirty || saving ? t("diagram.saving") : t("diagram.saved"))}
-            </span>
+              saveStatusClassName,
+            )}
+              role="status"
+              aria-live="polite"
+              aria-label={saveError ? `${saveLabel}. ${saveError}` : undefined}
+              {...statusSettleMotion}
+            >
+              {saveStatus === "error" ? (
+                <CircleAlert className="h-3 w-3" aria-hidden="true" />
+              ) : saveStatus === "saving" ? (
+                <LoaderCircle className="h-3 w-3 animate-spin" aria-hidden="true" />
+              ) : saveStatus === "unsaved" ? (
+                <Pencil className="h-3 w-3" aria-hidden="true" />
+              ) : (
+                <Check className="h-3 w-3" aria-hidden="true" />
+              )}
+              {saveLabel}
+            </m.span>
             {!readOnly && saveFailed && (
               <Button variant="soft" size="sm" disabled={saving || !editSessionReady} onClick={() => void save()}>
                 <RefreshCw className="h-4 w-4" />
@@ -1761,48 +2147,36 @@ export const DiagramEditorPane = ({
         <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-slate-200 bg-white px-3 py-2">
           {!readOnly && (
             document.kind === "mind-map" ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button size="sm" variant="soft" onClick={() => addNode("topic")}><GitBranch className="h-4 w-4" />{t("diagram.addTopic")}</Button>
-                </TooltipTrigger>
-                <TooltipContent>{t("diagram.mindMapShortcuts")}</TooltipContent>
-              </Tooltip>
+              <DiagramInsertMenu
+                icon={GitBranch}
+                label={t("diagram.addTopic")}
+                items={[
+                  { icon: GitBranch, label: t("diagram.addTopic"), onSelect: () => addNode("topic", { relation: "child" }) },
+                  { icon: ListTree, label: t("diagram.addSiblingTopic"), onSelect: () => addNode("topic", { relation: "sibling" }) },
+                ]}
+              />
             ) : document.kind === "architecture" ? (
               <>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button size="sm" variant="soft" onClick={() => addNode("service")}><Server className="h-4 w-4" />{t("diagram.addService")}</Button>
-                  </TooltipTrigger>
-                  <TooltipContent>{t("diagram.architectureShortcuts")}</TooltipContent>
-                </Tooltip>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button size="sm" variant="outline"><Boxes className="h-4 w-4" />{t("diagram.components")}</Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start">
-                    <DropdownMenuItem onSelect={() => addNode("client")}><Network className="h-4 w-4" />{t("diagram.addClient")}</DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => addNode("frontend")}><Globe2 className="h-4 w-4" />{t("diagram.addFrontend")}</DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => addNode("database")}><Database className="h-4 w-4" />{t("diagram.addDatabase")}</DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => addNode("storage")}><HardDrive className="h-4 w-4" />{t("diagram.addStorage")}</DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => addNode("queue")}><GitBranch className="h-4 w-4" />{t("diagram.addQueue")}</DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => addNode("security")}><ShieldCheck className="h-4 w-4" />{t("diagram.addSecurity")}</DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => addNode("external")}><Globe2 className="h-4 w-4" />{t("diagram.addExternal")}</DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onSelect={() => addNode("boundary")}><Box className="h-4 w-4" />{t("diagram.addBoundary")}</DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <ArchitectureComponentLibrary
+                  onAdd={(item) => addNode(item.shape, {
+                    label: t(item.labelKey),
+                    resourceIcon: architectureResourceIcon(item),
+                  })}
+                  t={t}
+                />
                 <span className="hidden items-center gap-1.5 px-2 text-xs text-slate-500 xl:flex"><Link2 className="h-3.5 w-3.5" />{t("diagram.architectureConnectHint")}</span>
               </>
             ) : (
               <>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button size="sm" variant="soft" onClick={() => addNode("process")}><Box className="h-4 w-4" />{t("diagram.addStep")}</Button>
-                  </TooltipTrigger>
-                  <TooltipContent>{t("diagram.flowchartShortcuts")}</TooltipContent>
-                </Tooltip>
-                <Tooltip><TooltipTrigger asChild><Button size="sm" variant="ghost" aria-label={t("diagram.addDecision")} onClick={() => addNode("decision")}><Diamond className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent>{t("diagram.addDecision")}</TooltipContent></Tooltip>
-                <Tooltip><TooltipTrigger asChild><Button size="sm" variant="ghost" aria-label={t("diagram.addTerminator")} onClick={() => addNode("terminator")}><Circle className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent>{t("diagram.addTerminator")}</TooltipContent></Tooltip>
+                <DiagramInsertMenu
+                  icon={Box}
+                  label={t("diagram.addStep")}
+                  items={[
+                    { icon: Box, label: t("diagram.addStep"), onSelect: () => addNode("process") },
+                    { icon: Diamond, label: t("diagram.addDecision"), onSelect: () => addNode("decision") },
+                    { icon: Circle, label: t("diagram.addTerminator"), onSelect: () => addNode("terminator") },
+                  ]}
+                />
                 <span className="hidden items-center gap-1.5 px-2 text-xs text-slate-500 xl:flex"><Link2 className="h-3.5 w-3.5" />{t("diagram.connectHint")}</span>
               </>
             )

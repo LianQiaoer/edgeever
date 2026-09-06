@@ -121,6 +121,7 @@
       "name": "@edgeever/mobile",
       "version": "1.0.0",
       "dependencies": {
+        "@antv/x6": "3.1.8",
         "@edgeever/client": "workspace:*",
         "@edgeever/shared": "workspace:*",
         "@expo/vector-icons": "^15.1.1",
@@ -261,6 +262,7 @@
         "@tiptap/markdown": "3.31.0",
         "@tiptap/pm": "3.31.0",
         "@tiptap/starter-kit": "3.31.0",
+        "js-base64": "3.9.3",
         "katex": "0.16.22",
         "zod": "4.4.3",
       },
@@ -2790,6 +2792,8 @@
     "jiti": ["jiti@1.21.7", "", { "bin": { "jiti": "bin/jiti.js" } }, "sha512-/imKNG4EbWNrVjoNC/1H5/9GFy+tqjGBHCaSsN+P2RnPqjsLmv6UD3Ej+Kj8nBWaRAwyk7kK5ZUc+OEatnTR3A=="],
 
     "jose": ["jose@5.9.6", "", {}, "sha512-AMlnetc9+CV9asI19zHmrgS/WYsWUwCn2R7RzlbJWD7F9eWYUTGyBmU9o6PxngtLGOiDGPRu+Uc4fhKzbpteZQ=="],
+
+    "js-base64": ["js-base64@3.9.3", "", {}, "sha512-uwYQp+VJ38FVvtim6qNbit6e9uT6dwWQ4Y1+H9TxhW5hcHjpHwoxlR0nMpqUmIFOmu4VqMxwdJA88gIVuZJQ/g=="],
 
     "js-tokens": ["js-tokens@4.0.0", "", {}, "sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ=="],
 

@@ -198,6 +198,7 @@ const memoToSummary = (memo: MemoDetail): MemoSummary => ({
   notebookId: memo.notebookId,
   title: memo.title,
   excerpt: memo.excerpt || createExcerpt(memo.contentText || docToText(resolveMemoContentDoc(memo.contentJson, memo.contentMarkdown))),
+  diagramKind: parseDiagramDocument(memo.contentMarkdown)?.kind ?? null,
   tags: memo.tags,
   isPinned: memo.isPinned,
   isArchived: memo.isArchived,

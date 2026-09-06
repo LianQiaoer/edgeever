@@ -29,6 +29,7 @@
     "@tiptap/markdown": "3.31.0",
     "@tiptap/pm": "3.31.0",
     "@tiptap/starter-kit": "3.31.0",
+    "js-base64": "3.9.3",
     "katex": "0.16.22",
     "zod": "4.4.3"
   }
