@@ -49,7 +49,7 @@ patch(
       "// fall back to the storage adapter's unavailable store.",
       'const r2Section = config.indexOf("[[r2_buckets]]");',
       "if (r2Section !== -1) {",
-      '  const nextSection = config.indexOf(String.fromCharCode(10) + "[[", r2Section + "[[r2_buckets]]".length);',
+      '  const nextSection = config.indexOf(String.fromCharCode(10) + "[", r2Section + "[[r2_buckets]]".length);',
       "  config = nextSection === -1",
       "    ? config.slice(0, r2Section).trimEnd()",
       "    : config.slice(0, r2Section) + config.slice(nextSection + 1);",
