@@ -81,7 +81,7 @@ export type StorageAdapter = {
   resources: BlobStoreAdapter;
   diagnostics: {
     database: "d1" | "sqlite";
-    resources: "r2" | "filesystem" | "s3" | "unavailable";
+    resources: "r2" | "filesystem" | "s3";
     migrationTable: "d1_migrations" | "_edgeever_migrations";
   };
 };

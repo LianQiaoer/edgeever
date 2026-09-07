@@ -1,19 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Export, Graph, History, Keyboard, Selection, type Edge, type Node } from "@antv/x6";
+import { diagramEditorSnapshot } from "@/lib/diagram-editor-snapshot";
+import { MemoTitleInput } from "@/components/MemoTitleInput";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Dom, Export, Graph, History, Keyboard, Selection, type Edge, type Node } from "@antv/x6";
 import * as m from "motion/react-m";
 import {
   Activity,
   AppWindow,
   Blocks,
   Box,
-  Boxes,
   BrickWall,
   Cable,
   Check,
   ChartNoAxesCombined,
   ChevronDown,
   ChevronLeft,
-  ChevronRight,
   Circle,
   CircleAlert,
   Cloud,
@@ -26,7 +26,6 @@ import {
   Diamond,
   Database,
   DatabaseZap,
-  Download,
   EthernetPort,
   FileCode2,
   FileClock,
@@ -38,21 +37,16 @@ import {
   Globe2,
   HardDrive,
   History as HistoryIcon,
-  LayoutDashboard,
   KeyRound,
   Layers3,
   ListTree,
   Link2,
   LockKeyhole,
   LoaderCircle,
-  Maximize2,
-  Minimize2,
-  MoreHorizontal,
   MonitorSmartphone,
   Network,
   Pencil,
   RadioTower,
-  Redo2,
   RefreshCw,
   RotateCcw,
   Router,
@@ -63,16 +57,14 @@ import {
   Smartphone,
   SquareFunction,
   Trash2,
-  Undo2,
   Webhook,
   Workflow,
   Zap,
-  ZoomIn,
-  ZoomOut,
   type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
+  attachDiagramScroll,
   ARCHITECTURE_DIAGRAM_SCHEMA_VERSION,
   DIAGRAM_SCHEMA_VERSION,
   diagramFallbackMarkdown,
@@ -86,6 +78,7 @@ import {
   type DiagramTheme,
   type MemoDetail,
   type MemoEditSession,
+  type Notebook,
 } from "@edgeever/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -93,39 +86,54 @@ import { AppConfirmDialog } from "@/components/dialogs/ConfirmDialogs";
 import { RevisionHistoryDialog } from "@/components/dialogs/RevisionHistoryDialog";
 import { ShareMemoDialog } from "@/components/dialogs/ShareMemoDialog";
 import { ClipboardCopyNotice } from "@/components/ClipboardCopyNotice";
+import { DiagramToolbar, DiagramToolbarAddTrigger } from "@/components/DiagramToolbar";
+import { MemoEditorHeaderActions } from "@/components/MemoEditorHeaderActions";
+import { MemoEditorMetadataRow } from "@/components/MemoEditorMetadataRow";
+import { MemoEditorTopRowLeading } from "@/components/MemoEditorTopRowLeading";
+import {
+  MEMO_EDITOR_TITLE_REGION_CLASS_NAME,
+  MEMO_EDITOR_TOP_ROW_CLASS_NAME,
+} from "@/components/MemoEditorChromeDensity";
+import { EditorNoteSearchBar } from "@/components/editor/EditorNoteSearchBar";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAppearanceTheme } from "@/components/ThemeProvider";
 import { api } from "@/lib/api";
-import { EDITOR_LOCAL_SAVE_DELAY_MS } from "@/lib/app-helpers";
+import { EDITOR_LOCAL_SAVE_DELAY_MS, getNotebookMoveOptions } from "@/lib/app-helpers";
 import { copyTextToClipboard } from "@/lib/clipboard";
-import { compactArchitectureNodeSize, compactFlowchartNodeSize, compactMindMapNodeSize, computeDiagramLayout } from "@/lib/diagram-layout";
+import {
+  compactArchitectureNodeSize,
+  compactFlowchartNodeSize,
+  flowchartNodePresentation,
+  compactMindMapNodeSize,
+  computeDiagramLayout,
+  computeDiagramLayoutResult,
+  getDiagramLayoutViewport,
+  type DiagramLayoutViewport,
+} from "@/lib/diagram-layout";
 import { resolveDiagramPalette, type DiagramAppearance } from "@/lib/diagram-theme";
 import { isLocalMemoId } from "@/lib/local-mirror";
 import { isBrowserOffline } from "@/lib/network-status";
 import { statusSettleMotion } from "@/lib/motion";
 import type { EdgeEverRepository } from "@/lib/repository";
-import { cn, formatDateTime } from "@/lib/utils";
+import { cn, formatDateTime, parseTagsText } from "@/lib/utils";
 
 type DiagramEditorPaneProps = {
   memo: MemoDetail;
+  notebooks: Notebook[];
   repository: EdgeEverRepository;
   readOnly: boolean;
   desktopFocusMode: boolean;
-  hasNextMemo: boolean;
-  hasPreviousMemo: boolean;
   onBackToList: () => void;
   onDeleted: (memoId: string) => Promise<void>;
-  onOpenNextMemo: () => void;
-  onOpenPreviousMemo: () => void;
   onPermanentDeleted: (memoId: string) => Promise<void>;
   onRestored: (memoId: string) => Promise<void>;
   onSaved: (memo: MemoDetail) => Promise<void>;
   onSaveAsTemplate: (memo: MemoDetail, name: string) => Promise<void>;
   onToggleDesktopFocusMode: () => void;
+  onOpenExecutionCenter: () => void;
+  companionDiscoveryHub?: ReactNode;
 };
 
 type NodeData = { label: string; shape: DiagramNodeShape; parentId?: string; resourceIcon?: ArchitectureResourceIcon };
@@ -168,6 +176,8 @@ type ArchitectureLibraryItem = {
   labelKey: `diagram.architectureResources.${ArchitectureResourceIcon}`;
   shape: DiagramNodeShape;
 };
+
+const ARCHITECTURE_LIBRARY_DRAG_TYPE = "application/x-edgeever-architecture-resource";
 
 const ARCHITECTURE_LIBRARY_CATEGORIES: Array<{
   id: string;
@@ -304,10 +314,10 @@ const inferArchitectureResourceIcon = (
 };
 
 const ArchitectureComponentLibrary = ({
-  onAdd,
+  onPick,
   t,
 }: {
-  onAdd: (item: ArchitectureLibraryItem) => void;
+  onPick: (item: ArchitectureLibraryItem) => void;
   t: (key: string) => string;
 }) => {
   const [open, setOpen] = useState(false);
@@ -319,15 +329,11 @@ const ArchitectureComponentLibrary = ({
   })).filter((category) => category.items.length > 0);
 
   return (
-    <DropdownMenu open={open} onOpenChange={(nextOpen) => {
+    <DropdownMenu modal={false} open={open} onOpenChange={(nextOpen) => {
       setOpen(nextOpen);
       if (!nextOpen) setQuery("");
     }}>
-      <DropdownMenuTrigger asChild>
-        <Button size="sm" variant="outline" onPointerEnter={() => setOpen(true)}>
-          <Boxes className="h-4 w-4" />{t("diagram.componentLibrary")}
-        </Button>
-      </DropdownMenuTrigger>
+      <DiagramToolbarAddTrigger onPointerEnter={() => setOpen(true)} />
       <DropdownMenuContent align="start" className="max-h-[min(36rem,calc(100vh-8rem))] w-[min(30rem,calc(100vw-2rem))] overflow-y-auto p-0">
         <div className="sticky top-0 z-10 border-b border-slate-200 bg-white p-2.5">
           <div className="relative">
@@ -362,17 +368,24 @@ const ArchitectureComponentLibrary = ({
                         <TooltipTrigger asChild>
                           <DropdownMenuItem
                             aria-label={label}
-                            className={cn("flex h-10 w-10 cursor-pointer justify-center rounded-lg p-0 hover:bg-current/10 focus:bg-current/10", category.tone)}
+                            className={cn("flex h-10 w-10 cursor-grab justify-center rounded-lg p-0 hover:bg-current/10 focus:bg-current/10 active:cursor-grabbing", category.tone)}
+                            draggable
+                            onDragStart={(event) => {
+                              event.dataTransfer.effectAllowed = "copy";
+                              event.dataTransfer.setData(ARCHITECTURE_LIBRARY_DRAG_TYPE, architectureResourceIcon(item));
+                            }}
+                            onDragEnd={() => setOpen(false)}
                             onSelect={() => {
-                              onAdd(item);
+                              onPick(item);
                               setOpen(false);
                             }}
                           >
                             <Icon className="h-5 w-5" />
                           </DropdownMenuItem>
                         </TooltipTrigger>
-                        <TooltipContent side="top">
-                          {label}
+                        <TooltipContent side="top" className="max-w-48">
+                          <div>{label}</div>
+                          <div className="text-[11px] text-slate-300">{t("diagram.placeShapeHelp")}</div>
                         </TooltipContent>
                       </Tooltip>
                     );
@@ -390,24 +403,14 @@ const ArchitectureComponentLibrary = ({
 };
 
 const DiagramInsertMenu = ({
-  icon: TriggerIcon,
   items,
-  label,
 }: {
-  icon: LucideIcon;
   items: Array<{ icon: LucideIcon; label: string; onSelect: () => void }>;
-  label: string;
 }) => {
   const [open, setOpen] = useState(false);
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
-      <DropdownMenuTrigger asChild>
-        <Button size="sm" variant="soft" onPointerEnter={() => setOpen(true)}>
-          <TriggerIcon className="h-4 w-4" />
-          {label}
-          <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
-        </Button>
-      </DropdownMenuTrigger>
+      <DiagramToolbarAddTrigger onPointerEnter={() => setOpen(true)} />
       <DropdownMenuContent align="start">
         {items.map((item) => {
           const Icon = item.icon;
@@ -498,6 +501,10 @@ const applyDiagramSurface = (
 };
 
 const prepareExportSvg = (background: string) => (svg: SVGSVGElement) => {
+  svg.querySelectorAll<SVGElement>(".x6-node, .x6-edge").forEach((element) => {
+    element.removeAttribute("display");
+    element.style.removeProperty("display");
+  });
   svg.querySelectorAll(".x6-port").forEach((element) => element.remove());
   const viewBox = svg.getAttribute("viewBox")?.split(/\s+/).map(Number);
   if (!viewBox || viewBox.length !== 4 || viewBox.some((value) => !Number.isFinite(value))) return;
@@ -681,14 +688,47 @@ const architectureNodeVisuals = (
   };
 };
 
-const diagramNodeSize = (
+// Reuse X6's measured text wrapping so on-screen labels and SVG/PNG exports agree.
+const diagramNodePresentation = (
   node: DiagramDocument["nodes"][number],
   kind: DiagramDocument["kind"],
-) => kind === "mind-map"
-  ? compactMindMapNodeSize(node.label, !node.parentId)
-  : kind === "architecture"
-    ? compactArchitectureNodeSize(node.shape, node)
-    : compactFlowchartNodeSize(node.shape);
+) => {
+  if (kind === "flowchart") return flowchartNodePresentation(node.shape, node.label);
+  const size = kind === "mind-map"
+    ? compactMindMapNodeSize(node.label, !node.parentId)
+    : kind === "architecture"
+      ? compactArchitectureNodeSize(node.shape, node)
+      : compactFlowchartNodeSize(node.shape);
+  if (node.shape === "boundary") return { ...size, text: node.label };
+  const fontSize = kind === "mind-map" ? 14 : 13;
+  const lineHeight = 18;
+  const text = Dom.breakText(node.label, { width: size.width - (kind === "architecture" ? 66 : 24), height: 10000 }, {
+    fontSize, 'font-size': fontSize, 'font-weight': kind === "architecture" || !node.parentId ? 650 : 500,
+    lineHeight,
+  });
+  return { ...size, height: Math.max(size.height, text.split("\n").length * lineHeight + 16), text };
+};
+
+const diagramNodeSize = (node: DiagramDocument["nodes"][number], kind: DiagramDocument["kind"]) => {
+  const { width, height } = diagramNodePresentation(node, kind);
+  return { width, height };
+};
+
+const refreshNodeLabel = (node: Node, label: string) => {
+  const data = node.getData<NodeData>();
+  const shape = data?.shape ?? "process";
+  if (shape === "boundary") {
+    node.attr("label/text", label);
+    return;
+  }
+  const kind = shape === "topic" ? "mind-map" : ARCHITECTURE_NODE_ACCENTS[shape] ? "architecture" : "flowchart";
+  const presentation = diagramNodePresentation({ id: node.id, ...node.getPosition(), ...node.getSize(), ...data, shape, label }, kind);
+  const currentSize = node.getSize();
+  if (currentSize.width !== presentation.width || currentSize.height !== presentation.height) {
+    node.resize(presentation.width, presentation.height);
+  }
+  node.attr("label/text", presentation.text);
+};
 
 const flowPortGroup = (
   position: FlowPort,
@@ -751,7 +791,8 @@ const nodeMetadata = (
       body: visualAttrs.body,
       label: {
         ...visualAttrs.label,
-        text: node.label,
+        text: diagramNodePresentation(node, kind).text,
+        lineHeight: 18,
         ...(architectureVisuals ? { refX: 54, refY: "50%", textAnchor: "start", textVerticalAnchor: "middle" } : {}),
       },
       ...(architectureVisuals?.attrs ?? {}),
@@ -767,6 +808,15 @@ const nodeMetadata = (
     } } : {}),
   };
 };
+
+const diagramEdgeLabel = (text: string, palette: ReturnType<typeof resolveDiagramPalette>, kind: DiagramDocument["kind"]) => ({
+  position: { distance: 0.5, offset: kind === "architecture" ? { x: 0, y: -16 } : 0 },
+  attrs: {
+    label: { text, fill: palette.nodeText, fontSize: 12, lineHeight: 16, textWrap: { width: 140, height: 512 } },
+    body: { ref: "label", refWidth: 1, refHeight: 1, refWidth2: 12, refHeight2: 8, refX: -6, refY: -4,
+      fill: palette.canvas, stroke: palette.nodeStroke, strokeWidth: 1, rx: 4, ry: 4 },
+  },
+});
 
 const edgeMetadata = (
   edge: DiagramDocument["edges"][number],
@@ -785,7 +835,7 @@ const edgeMetadata = (
     id: edge.id,
     source: { cell: edge.source },
     target: { cell: edge.target },
-    router: undefined,
+    router: kind === "flowchart" ? { name: "manhattan", args: { padding: 28, step: 10 } } : undefined,
     connector: { name: kind === "mind-map" ? "smooth" : "rounded", args: { radius: 10 } },
     data: { ...(edgeKind ? { kind: edgeKind } : {}), ...(edge.bidirectional ? { bidirectional: true } : {}) } satisfies EdgeData,
     attrs: {
@@ -797,10 +847,7 @@ const edgeMetadata = (
         targetMarker: kind === "mind-map" ? null : { name: "block", width: 8, height: 6 },
       },
     },
-    labels: edge.label ? [{ attrs: {
-      label: { text: edge.label, fill: palette.nodeText, fontSize: 12 },
-      body: { fill: palette.canvas, stroke: palette.nodeStroke, strokeWidth: 1, rx: 5, ry: 5 },
-    } }] : undefined,
+    labels: edge.label ? [diagramEdgeLabel(edge.label, palette, kind)] : undefined,
   };
 };
 
@@ -866,47 +913,54 @@ const removeGraphSelection = (graph: Graph) => {
   return true;
 };
 
-const diagramEditorSnapshot = (title: string, document: DiagramDocument) => JSON.stringify({
-  title,
-  document: {
-    ...document,
-    theme: document.theme ?? "brand",
-    nodes: document.nodes.map((node) => ({ ...node, ...diagramNodeSize(node, document.kind) })),
-  },
-});
 
-const fitDiagramContent = (graph: Graph, document: DiagramDocument, container: HTMLElement | null, padding = 32) => {
-  graph.zoomToFit({ padding, maxScale: document.kind === "mind-map" ? 1 : 0.84 });
-  if (!container) return;
-  const anchor = document.kind === "mind-map"
-    ? graph.getNodes().find((node) => !node.getData<NodeData>()?.parentId)
-    : graph.getNodes().reduce<Node | null>((leftmost, node) => (
-        !leftmost || node.getBBox().x < leftmost.getBBox().x ? node : leftmost
-      ), null);
-  if (!anchor) return;
-  const contentLeft = graph.localToGraph(anchor.getBBox().topLeft).x;
-  const desiredLeft = Math.max(32, Math.min(72, container.clientWidth * 0.055));
-  const translation = graph.translate();
-  graph.translate(translation.tx + desiredLeft - contentLeft, translation.ty);
+const fitDiagramContent = (
+  graph: Graph,
+  document: DiagramDocument,
+  container: HTMLElement | null,
+  padding = 32,
+  viewport?: DiagramLayoutViewport,
+) => {
+  const policy = viewport ?? getDiagramLayoutViewport(document.kind);
+  const visibleNodes = graph.getNodes().filter((node) => node.isVisible());
+  if (visibleNodes.length !== graph.getNodes().length) {
+    const bounds = graph.getCellsBBox(visibleNodes);
+    if (bounds) graph.zoomToRect(bounds, { padding, maxScale: policy.maxScale });
+    return;
+  }
+  graph.zoomToFit({
+    padding,
+    maxScale: policy.maxScale,
+
+  });
+  // Fit the complete bounding box, including branches left of a mind-map root.
+  // A minimum scale or a second anchor translation can crop existing content.
+  graph.centerContent();
 };
 
-const fitArchitectureBoundaries = (graph: Graph) => {
-  const nodes = graph.getNodes();
-  for (const boundary of nodes.filter((node) => node.getData<NodeData>()?.shape === "boundary")) {
-    const children = nodes.filter((node) => node.getData<NodeData>()?.parentId === boundary.id);
-    if (children.length === 0) continue;
-    const positions = new Map(children.map((node) => [node.id, node.getPosition()]));
-    const boxes = children.map((node) => node.getBBox());
-    const left = Math.min(...boxes.map((box) => box.x)) - 36;
-    const top = Math.min(...boxes.map((box) => box.y)) - 56;
-    const right = Math.max(...boxes.map((box) => box.x + box.width)) + 36;
-    const bottom = Math.max(...boxes.map((box) => box.y + box.height)) + 36;
-    boundary.position(left, top);
-    boundary.resize(Math.max(260, right - left), Math.max(180, bottom - top));
-    for (const child of children) {
-      const position = positions.get(child.id);
-      if (position) child.position(position.x, position.y);
-    }
+const readFlowchart = (graph: Graph, document: DiagramDocument, container: HTMLElement | null) => {
+  if (!container || !document.nodes.length) return;
+  const incoming = new Set(document.edges.map((edge) => edge.target));
+  const start = document.nodes.find((node) => !incoming.has(node.id)) ?? document.nodes[0];
+  const cell = graph.getCellById(start.id);
+  if (!cell?.isNode()) return;
+  graph.zoomTo(1);
+  const bounds = cell.getBBox();
+  graph.translate(container.clientWidth / 2 - bounds.center.x, 48 - bounds.y);
+};
+
+const applyMindMapHierarchy = (graph: Graph, theme: DiagramTheme, appearance: DiagramAppearance) => {
+  const palette = resolveDiagramPalette(theme, appearance);
+  const roots = new Set(graph.getNodes().filter((node) => !node.getData<NodeData>()?.parentId).map((node) => node.id));
+  for (const node of graph.getNodes()) {
+    const parentId = node.getData<NodeData>()?.parentId;
+    const primary = Boolean(parentId && roots.has(parentId));
+    node.attr("label/fontWeight", !parentId || primary ? 650 : 500);
+    node.attr("body/strokeWidth", !parentId ? 2 : primary ? 1.5 : 1);
+    if (primary) node.attr("body/stroke", palette.topicStroke);
+  }
+  for (const edge of graph.getEdges()) {
+    edge.attr("line/strokeWidth", roots.has(edge.getSourceCellId()) ? 2.5 : 1.25);
   }
 };
 
@@ -925,7 +979,8 @@ const applyGraphPalette = (
       const shape = data?.shape ?? "process";
       const attrs = nodeAttrs(shape, theme, appearance, shape === "topic" && !data?.parentId);
       node.attr("body", attrs.body);
-      node.attr("label", { ...attrs.label, text: data?.label ?? "" });
+      node.attr("label", attrs.label);
+      refreshNodeLabel(node, data?.label ?? "");
       if (kind === "architecture" && shape !== "boundary") {
         const architectureVisuals = architectureNodeVisuals(shape, node.getSize(), appearance, data?.resourceIcon);
         for (const [selector, selectorAttrs] of Object.entries(architectureVisuals.attrs)) {
@@ -944,11 +999,10 @@ const applyGraphPalette = (
       const edgeKind = edge.getData<EdgeData>()?.kind;
       edge.attr("line/stroke", edgeKind === "data" ? "#7C3AED" : edgeKind === "async" ? "#EA580C" : kind === "mind-map" ? palette.mindMapEdge : palette.flowEdge);
       if (edge.getLabels().length > 0) {
-        edge.attr("label/fill", palette.nodeText);
-        edge.attr("body/fill", palette.canvas);
-        edge.attr("body/stroke", palette.nodeStroke);
+        edge.setLabels(edge.getLabels().map((label) => diagramEdgeLabel(String(label.attrs?.label?.text ?? ""), palette, kind)));
       }
     }
+    if (kind === "mind-map") applyMindMapHierarchy(graph, theme, appearance);
     applyDiagramSurface(graph, theme, appearance);
   } finally {
     if (historyEnabled) graph.enableHistory();
@@ -957,20 +1011,19 @@ const applyGraphPalette = (
 
 export const DiagramEditorPane = ({
   memo,
+  notebooks,
   repository,
   readOnly,
   desktopFocusMode,
-  hasNextMemo,
-  hasPreviousMemo,
   onBackToList,
   onDeleted,
-  onOpenNextMemo,
-  onOpenPreviousMemo,
   onPermanentDeleted,
   onRestored,
   onSaved,
   onSaveAsTemplate,
   onToggleDesktopFocusMode,
+  onOpenExecutionCenter,
+  companionDiscoveryHub,
 }: DiagramEditorPaneProps) => {
   const { t } = useTranslation();
   const { resolvedTheme } = useAppearanceTheme();
@@ -984,17 +1037,21 @@ export const DiagramEditorPane = ({
   const document = parseDiagramDocument(memo.contentMarkdown);
   const documentTheme = document?.theme ?? "brand";
   const [title, setTitle] = useState(memo.title ?? "");
+  const [tagsText, setTagsText] = useState(memo.tags.join(", "));
   const [theme, setTheme] = useState<DiagramTheme>(documentTheme);
   const titleRef = useRef(title);
+  const tagsRef = useRef(tagsText);
   const themeRef = useRef<DiagramTheme>(documentTheme);
   const appearanceRef = useRef<DiagramAppearance>(resolvedTheme);
   const savedSnapshotRef = useRef(document ? diagramEditorSnapshot(memo.title ?? "", document) : "");
+  const viewOnlyRef = useRef(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedNodeLabel, setSelectedNodeLabel] = useState("");
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [selectedEdgeLabel, setSelectedEdgeLabel] = useState("");
   const [hasSelection, setHasSelection] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [tagsDirty, setTagsDirty] = useState(false);
   const [dirtyVersion, setDirtyVersion] = useState(0);
   const [saving, setSaving] = useState(false);
   const [editSessionReady, setEditSessionReady] = useState(false);
@@ -1005,12 +1062,37 @@ export const DiagramEditorPane = ({
   const [memoIdCopyNotice, setMemoIdCopyNotice] = useState<"copied" | "error" | null>(null);
   const memoIdCopyTimerRef = useRef<number | null>(null);
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchIndex, setSearchIndex] = useState(0);
+  const [mobileNotebookSheetOpen, setMobileNotebookSheetOpen] = useState(false);
+  const [notebookUpdatePending, setNotebookUpdatePending] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const [zoomPercent, setZoomPercent] = useState(100);
   const [historyState, setHistoryState] = useState({ undo: false, redo: false });
   const [nodeEditor, setNodeEditor] = useState<NodeEditorState | null>(null);
   const [flowQuickCreate, setFlowQuickCreate] = useState<FlowQuickCreateState | null>(null);
+  const [pendingArchitectureItem, setPendingArchitectureItem] = useState<ArchitectureLibraryItem | null>(null);
+  const notebookOptions = useMemo(() => getNotebookMoveOptions(notebooks), [notebooks]);
   const flowQuickCreateRef = useRef<FlowQuickCreateState | null>(null);
   const flowPointerDragRef = useRef<FlowPointerDragState | null>(null);
   const nodeEditorRef = useRef<NodeEditorState | null>(null);
+  const editorDirty = dirty || tagsDirty;
+
+  useEffect(() => {
+    setPendingArchitectureItem(null);
+  }, [memo.id]);
+
+  useEffect(() => {
+    if (!pendingArchitectureItem) return;
+    const cancelPlacement = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setPendingArchitectureItem(null);
+    };
+    window.addEventListener("keydown", cancelPlacement);
+    return () => window.removeEventListener("keydown", cancelPlacement);
+  }, [pendingArchitectureItem]);
 
   const beginNodeEdit = useCallback((node: Node) => {
     const graph = graphRef.current;
@@ -1033,7 +1115,7 @@ export const DiagramEditorPane = ({
       if (label !== current.originalValue) {
         graph.startBatch("edit-label");
         cell.setData({ ...cell.getData<NodeData>(), label });
-        cell.attr("label/text", label);
+        refreshNodeLabel(cell, label);
         graph.stopBatch("edit-label");
         setSelectedNodeLabel(label);
       }
@@ -1078,8 +1160,12 @@ export const DiagramEditorPane = ({
     memoRef.current = memo;
     setTitle(memo.title ?? "");
     titleRef.current = memo.title ?? "";
+    setTagsText(memo.tags.join(", "));
+    tagsRef.current = memo.tags.join(", ");
     savedSnapshotRef.current = document ? diagramEditorSnapshot(memo.title ?? "", document) : "";
     setDirty(false);
+    setTagsDirty(false);
+    setMobileNotebookSheetOpen(false);
     setSaveError(null);
     setSaveFailed(false);
     editSessionRef.current = null;
@@ -1105,7 +1191,12 @@ export const DiagramEditorPane = ({
     appearanceRef.current = resolvedTheme;
     const graph = graphRef.current;
     if (!graph || !document) return;
-    applyGraphPalette(graph, themeRef.current, document.kind, resolvedTheme);
+    viewOnlyRef.current = true;
+    try {
+      applyGraphPalette(graph, themeRef.current, document.kind, resolvedTheme);
+    } finally {
+      viewOnlyRef.current = false;
+    }
     const currentEditor = nodeEditorRef.current;
     if (!currentEditor) return;
     const node = graph.getCellById(currentEditor.nodeId);
@@ -1132,7 +1223,7 @@ export const DiagramEditorPane = ({
       async: true,
       background: { color: palette.canvas },
       grid: false,
-      panning: { enabled: true, eventTypes: ["leftMouseDown", "mouseWheel"] },
+      panning: { enabled: true, eventTypes: ["leftMouseDown"] },
       mousewheel: { enabled: true, modifiers: ["ctrl", "meta"], minScale: 0.3, maxScale: 2.5 },
       interacting: !readOnly,
       connecting: {
@@ -1144,7 +1235,7 @@ export const DiagramEditorPane = ({
         allowMulti: false,
         highlight: isConnectableDiagram(document.kind),
         snap: { radius: 24 },
-        router: "normal",
+        router: document.kind === "flowchart" ? { name: "manhattan", args: { padding: 28, step: 10 } } : "normal",
         connector: document.kind === "mind-map" ? "smooth" : "rounded",
         validateConnection: ({ sourceCell, targetCell, sourcePort, targetPort }) => {
           if (!isConnectableDiagram(document.kind) || !sourceCell || !sourcePort) return false;
@@ -1178,6 +1269,7 @@ export const DiagramEditorPane = ({
       },
     }));
     graph.use(new Selection({ enabled: true, multiple: true, rubberband: true, movable: !readOnly, showNodeSelectionBox: true, showEdgeSelectionBox: true }));
+    const detachScroll = attachDiagramScroll(graph.container, graph);
     graph.addNodes(document.nodes.map((node) => {
       const inferredResourceIcon = document.kind === "architecture" && !node.resourceIcon
         ? inferArchitectureResourceIcon(node.label, t)
@@ -1195,11 +1287,22 @@ export const DiagramEditorPane = ({
       }
     }
     graph.addEdges(document.edges.map((edge) => edgeMetadata(edge, document.kind, documentTheme, appearance)));
+    let viewportWidth = containerRef.current?.clientWidth ?? 0;
+    let viewportHeight = containerRef.current?.clientHeight ?? 0;
+    graph.on("resize", ({ width, height }) => {
+      const translation = graph.translate();
+      graph.translate(translation.tx + (width - viewportWidth) / 2, translation.ty + (height - viewportHeight) / 2);
+      viewportWidth = width;
+      viewportHeight = height;
+    });
+    graph.on("scale", () => setZoomPercent(Math.round(graph.scale().sx * 100)));
     graph.cleanHistory();
     fitDiagramContent(graph, document, containerRef.current);
+    if (document.kind === "flowchart" && graph.scale().sx < 0.8) readFlowchart(graph, document, containerRef.current);
 
     const updateHistory = () => setHistoryState({ undo: graph.canUndo(), redo: graph.canRedo() });
     const markDirty = () => {
+      if (viewOnlyRef.current) return;
       if (!readOnly) {
         const currentDocument = graphToDocument(graph, document.kind, themeRef.current);
         const hasChanges = savedSnapshotRef.current !== diagramEditorSnapshot(titleRef.current, currentDocument);
@@ -1499,6 +1602,7 @@ export const DiagramEditorPane = ({
     graph.bindKey("1", (event) => {
       event.preventDefault();
       graph.zoomTo(1);
+      graph.centerContent();
     });
     graph.bindKey("esc", (event) => {
       if (!flowQuickCreateRef.current) return;
@@ -1545,16 +1649,16 @@ export const DiagramEditorPane = ({
       openFlowQuickCreateRef.current = () => undefined;
       nodeEditorRef.current = null;
       graphRef.current = null;
-      graph.dispose();
+      detachScroll(); graph.dispose();
     };
   }, [beginNodeEdit, dismissFlowQuickCreate, memo.contentHash, memo.id, readOnly]);
 
   useEffect(() => {
-    if (!dirty) return;
+    if (!editorDirty) return;
     const warn = (event: BeforeUnloadEvent) => event.preventDefault();
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty]);
+  }, [editorDirty]);
 
   useEffect(() => {
     if (readOnly) return;
@@ -1575,6 +1679,7 @@ export const DiagramEditorPane = ({
       baseNodeId?: string;
       beginEditing?: boolean;
       label?: string;
+      position?: { x: number; y: number };
       resourceIcon?: ArchitectureResourceIcon;
     } = {},
   ) => {
@@ -1601,7 +1706,46 @@ export const DiagramEditorPane = ({
     const childNodes = isMindMap && selected?.isNode()
       ? graph.getNodes().filter((node) => node.getData<NodeData>()?.parentId === selected.id)
       : [];
-    const nextPosition = requestedSibling
+    const authoredSize = isArchitecture
+      ? compactArchitectureNodeSize(shape)
+      : { width: shape === "decision" ? 132 : 140, height: shape === "decision" ? 84 : 52 };
+    const dropBoundary = isArchitecture && shape !== "boundary" && options.position
+      ? graph.getNodes()
+        .filter((node) => node.getData<NodeData>()?.shape === "boundary")
+        .filter((node) => {
+          const bounds = node.getBBox();
+          return options.position!.x >= bounds.x
+            && options.position!.x <= bounds.x + bounds.width
+            && options.position!.y >= bounds.y
+            && options.position!.y <= bounds.y + bounds.height;
+        })
+        .sort((left, right) => {
+          const leftBounds = left.getBBox();
+          const rightBounds = right.getBBox();
+          return leftBounds.width * leftBounds.height - rightBounds.width * rightBounds.height;
+        })[0]
+      : undefined;
+    const requestedPosition = options.position
+      ? {
+          x: options.position.x - authoredSize.width / 2,
+          y: options.position.y - authoredSize.height / 2,
+        }
+      : undefined;
+    if (requestedPosition && dropBoundary) {
+      const bounds = dropBoundary.getBBox();
+      const horizontalPadding = 18;
+      const topPadding = 40;
+      const bottomPadding = 18;
+      requestedPosition.x = Math.min(
+        Math.max(requestedPosition.x, bounds.x + horizontalPadding),
+        Math.max(bounds.x + horizontalPadding, bounds.x + bounds.width - authoredSize.width - horizontalPadding),
+      );
+      requestedPosition.y = Math.min(
+        Math.max(requestedPosition.y, bounds.y + topPadding),
+        Math.max(bounds.y + topPadding, bounds.y + bounds.height - authoredSize.height - bottomPadding),
+      );
+    }
+    const nextPosition = requestedPosition ?? (requestedSibling
       ? {
           x: selectedPosition.x,
           y: Math.max(selectedPosition.y, ...siblings.map((node) => node.getPosition().y)) + 52,
@@ -1611,14 +1755,11 @@ export const DiagramEditorPane = ({
           y: childNodes.length > 0
             ? Math.max(...childNodes.map((node) => node.getPosition().y)) + 52
             : selectedPosition.y,
-        };
+        });
     const id = createId(isMindMap ? "topic" : "node");
     const architectureParentId = isArchitecture && shape !== "boundary"
-      ? selectedData?.shape === "boundary" ? selected?.id : selectedData?.parentId
+      ? dropBoundary?.id ?? (options.position ? undefined : selectedData?.shape === "boundary" ? selected?.id : selectedData?.parentId)
       : undefined;
-    const authoredSize = isArchitecture
-      ? compactArchitectureNodeSize(shape)
-      : { width: shape === "decision" ? 132 : 140, height: shape === "decision" ? 84 : 52 };
     graph.startBatch("add");
     const node = graph.addNode(nodeMetadata({
       id,
@@ -1671,6 +1812,47 @@ export const DiagramEditorPane = ({
     }
   }, [beginNodeEdit, document, readOnly, selectedNodeId, t]);
 
+  const placeArchitectureItem = useCallback((
+    item: ArchitectureLibraryItem,
+    position: { x: number; y: number },
+  ) => {
+    addNode(item.shape, {
+      label: t(item.labelKey),
+      position,
+      resourceIcon: architectureResourceIcon(item),
+    });
+    setPendingArchitectureItem(null);
+    requestAnimationFrame(() => containerRef.current?.focus({ preventScroll: true }));
+  }, [addNode, t]);
+
+  const handleArchitectureDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (document?.kind !== "architecture" || readOnly || !Array.from(event.dataTransfer.types).includes(ARCHITECTURE_LIBRARY_DRAG_TYPE)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  };
+
+  const handleArchitectureDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (document?.kind !== "architecture" || readOnly) return;
+    const resourceIcon = event.dataTransfer.getData(ARCHITECTURE_LIBRARY_DRAG_TYPE) as ArchitectureResourceIcon;
+    const item = ARCHITECTURE_LIBRARY_ITEMS.find((candidate) => architectureResourceIcon(candidate) === resourceIcon);
+    const graph = graphRef.current;
+    if (!item || !graph) return;
+    event.preventDefault();
+    event.stopPropagation();
+    placeArchitectureItem(item, graph.clientToLocal({ x: event.clientX, y: event.clientY }));
+  };
+
+  const handlePendingArchitecturePlacement = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!pendingArchitectureItem || document?.kind !== "architecture" || readOnly || event.button !== 0) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest(".x6-node, .x6-edge")) return;
+    const graph = graphRef.current;
+    if (!graph) return;
+    event.preventDefault();
+    event.stopPropagation();
+    placeArchitectureItem(pendingArchitectureItem, graph.clientToLocal({ x: event.clientX, y: event.clientY }));
+  };
+
   insertNodeRef.current = (relation, baseNodeId) => {
     addNode("topic", { relation, baseNodeId, beginEditing: true });
   };
@@ -1680,7 +1862,7 @@ export const DiagramEditorPane = ({
     const node = selectedNodeId ? graphRef.current?.getCellById(selectedNodeId) : null;
     if (!node?.isNode() || readOnly) return;
     node.setData({ ...node.getData<NodeData>(), label });
-    node.attr("label/text", label);
+    refreshNodeLabel(node, label);
   };
 
   const updateSelectedEdgeLabel = (label: string) => {
@@ -1692,10 +1874,7 @@ export const DiagramEditorPane = ({
       return;
     }
     const palette = resolveDiagramPalette(themeRef.current, appearanceRef.current);
-    edge.setLabels([{ attrs: {
-      label: { text: label, fill: palette.nodeText, fontSize: 12 },
-      body: { fill: palette.canvas, stroke: palette.nodeStroke, strokeWidth: 1, rx: 5, ry: 5 },
-    } }]);
+    edge.setLabels([diagramEdgeLabel(label, palette, document?.kind ?? "flowchart")]);
   };
 
   const createConnectedFlowNode = (shape: DiagramNodeShape) => {
@@ -1796,21 +1975,27 @@ export const DiagramEditorPane = ({
   const applyAutoLayout = () => {
     const graph = graphRef.current;
     if (!graph || !document || readOnly || graph.getNodes().length === 0) return;
-    const positions = computeDiagramLayout(graphToDocument(graph, document.kind, themeRef.current));
+    const layout = computeDiagramLayoutResult(graphToDocument(graph, document.kind, themeRef.current));
     graph.startBatch("layout");
     let changed = false;
-    for (const node of graph.getNodes()) {
-      const position = positions[node.id];
-      if (!position) continue;
+    for (const nodeId of layout.nodeOrder) {
+      const node = graph.getCellById(nodeId);
+      const geometry = layout.nodes[nodeId];
+      if (!node?.isNode()) continue;
+      if (!geometry) continue;
       const currentPosition = node.getPosition();
-      if (currentPosition.x !== position.x || currentPosition.y !== position.y) {
+      const currentSize = node.getSize();
+      if (currentPosition.x !== geometry.x || currentPosition.y !== geometry.y) {
         changed = true;
-        node.position(position.x, position.y);
+        node.position(geometry.x, geometry.y);
+      }
+      if (currentSize.width !== geometry.width || currentSize.height !== geometry.height) {
+        changed = true;
+        node.resize(geometry.width, geometry.height);
       }
     }
-    if (document.kind === "architecture") fitArchitectureBoundaries(graph);
     graph.stopBatch("layout");
-    fitDiagramContent(graph, document, containerRef.current, 40);
+    fitDiagramContent(graph, document, containerRef.current, 40, layout.viewport);
     if (changed) {
       setDirty(savedSnapshotRef.current !== diagramEditorSnapshot(
         titleRef.current,
@@ -1847,10 +2032,11 @@ export const DiagramEditorPane = ({
     try {
       const palette = resolveDiagramPalette(themeRef.current, appearanceRef.current);
       const beforeSerialize = prepareExportSvg(palette.canvas);
+      const viewBox = graph.getCellsBBox(graph.getCells()) ?? undefined;
       if (format === "png") {
-        graph.exportPNG(fileName, { backgroundColor: palette.canvas, padding: 32, ratio: 2, copyStyles: false, beforeSerialize });
+        graph.exportPNG(fileName, { backgroundColor: palette.canvas, padding: 32, ratio: 2, copyStyles: false, beforeSerialize, viewBox });
       } else {
-        graph.exportSVG(fileName, { preserveDimensions: true, copyStyles: false, beforeSerialize });
+        graph.exportSVG(fileName, { preserveDimensions: true, copyStyles: false, beforeSerialize, viewBox });
       }
     } catch {
       setSaveError(t("diagram.exportError"));
@@ -1861,7 +2047,14 @@ export const DiagramEditorPane = ({
     const graph = graphRef.current;
     const currentMemo = memoRef.current;
     const editSession = editSessionRef.current;
-    if (!graph || !document || !editSession || readOnly || saving) return;
+    if (!graph || !document || !editSession || readOnly || saving) return false;
+    if (
+      savedSnapshotRef.current === diagramEditorSnapshot(titleRef.current, graphToDocument(graph, document.kind, themeRef.current))
+      && !tagsDirty
+    ) {
+      setDirty(false);
+      return true;
+    }
     setSaving(true);
     setSaveError(null);
     setSaveFailed(false);
@@ -1869,6 +2062,7 @@ export const DiagramEditorPane = ({
       const nextDocument = graphToDocument(graph, document.kind, themeRef.current);
       const markdown = serializeDiagramDocument(nextDocument);
       const nextTitle = titleRef.current;
+      const nextTags = parseTagsText(tagsRef.current);
       const nextSnapshot = diagramEditorSnapshot(nextTitle, nextDocument);
       const result = await repository.updateMemo(currentMemo, {
         expectedRevision: currentMemo.revision,
@@ -1877,7 +2071,7 @@ export const DiagramEditorPane = ({
         title: nextTitle,
         contentJson: markdownToDoc(diagramFallbackMarkdown(nextDocument)),
         contentMarkdown: markdown,
-        tags: currentMemo.tags,
+        tags: nextTags,
       });
       memoRef.current = result.memo;
       savedSnapshotRef.current = nextSnapshot;
@@ -1886,15 +2080,24 @@ export const DiagramEditorPane = ({
         graphToDocument(graph, document.kind, themeRef.current),
       );
       const hasNewChanges = currentSnapshot !== nextSnapshot;
+      const hasNewTagChanges = parseTagsText(tagsRef.current).join("\u0000") !== result.memo.tags.join("\u0000");
       setDirty(hasNewChanges);
-      if (!hasNewChanges) {
+      setTagsDirty(hasNewTagChanges);
+      if (!hasNewTagChanges) {
+        const savedTagsText = result.memo.tags.join(", ");
+        tagsRef.current = savedTagsText;
+        setTagsText(savedTagsText);
+      }
+      if (!hasNewChanges && !hasNewTagChanges) {
         graph.cleanHistory();
         setHistoryState({ undo: false, redo: false });
         await onSaved(result.memo);
       }
+      return true;
     } catch (error) {
       setSaveFailed(true);
       setSaveError(error instanceof Error ? error.message : t("diagram.saveError"));
+      return false;
     } finally {
       setSaving(false);
     }
@@ -1902,10 +2105,10 @@ export const DiagramEditorPane = ({
   saveRef.current = () => { void save(); };
 
   useEffect(() => {
-    if (readOnly || !dirty || nodeEditor !== null || saving || !editSessionReady || saveFailed) return;
+    if (readOnly || !editorDirty || nodeEditor !== null || saving || !editSessionReady || saveFailed) return;
     const timer = window.setTimeout(() => saveRef.current(), EDITOR_LOCAL_SAVE_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [dirty, dirtyVersion, editSessionReady, nodeEditor, readOnly, saveFailed, saving]);
+  }, [dirtyVersion, editSessionReady, editorDirty, nodeEditor, readOnly, saveFailed, saving]);
 
   const handleCopyMemoId = async () => {
     if (isLocalMemoId(memo.id)) return;
@@ -1934,13 +2137,80 @@ export const DiagramEditorPane = ({
     }, name.trim());
   };
 
+  const handleNotebookChange = (notebookId: string) => {
+    const currentMemo = memoRef.current;
+    if (readOnly || notebookUpdatePending || notebookId === currentMemo.notebookId) {
+      setMobileNotebookSheetOpen(false);
+      return;
+    }
+
+    setNotebookUpdatePending(true);
+    setSaveError(null);
+    void (async () => {
+      if (editorDirty && !(await save())) return;
+      const sourceMemo = memoRef.current;
+      await repository.moveMemos({ memoIds: [sourceMemo.id], notebookId });
+      const { memo: movedMemo } = await repository.getMemo(sourceMemo.id);
+      memoRef.current = movedMemo;
+      await onSaved(movedMemo);
+    })()
+      .catch((error) => {
+        setSaveError(error instanceof Error ? error.message : t("diagram.saveError"));
+      })
+      .finally(() => {
+        setNotebookUpdatePending(false);
+        setMobileNotebookSheetOpen(false);
+      });
+  };
+
+  const searchMatches = useMemo(() => {
+    const query = searchQuery.trim().toLocaleLowerCase();
+    if (!searchOpen || !query) return [];
+    return (graphRef.current?.getNodes() ?? []).filter((node) =>
+      (node.getData<NodeData>()?.label ?? "").toLocaleLowerCase().includes(query),
+    );
+  }, [dirtyVersion, memo.id, searchOpen, searchQuery]);
+
+  const selectSearchMatch = useCallback((index: number) => {
+    const graph = graphRef.current;
+    const node = searchMatches[index];
+    if (!graph || !node) return;
+    graph.cleanSelection();
+    graph.select(node);
+    graph.centerCell(node);
+    setSelectedNodeId(node.id);
+    setSelectedNodeLabel(node.getData<NodeData>()?.label ?? "");
+  }, [searchMatches]);
+
+  const moveSearchMatch = useCallback((direction: -1 | 1) => {
+    if (searchMatches.length === 0) return;
+    setSearchIndex((current) => {
+      const next = (current + direction + searchMatches.length) % searchMatches.length;
+      selectSearchMatch(next);
+      return next;
+    });
+  }, [searchMatches.length, selectSearchMatch]);
+
+  const openSearch = useCallback(() => {
+    setSearchOpen(true);
+    window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    });
+  }, []);
+
+  useEffect(() => {
+    setSearchIndex(0);
+    if (searchMatches[0]) selectSearchMatch(0);
+  }, [searchMatches, selectSearchMatch]);
+
   if (!document) return null;
   const kindLabel = document.kind === "mind-map" ? t("diagram.mindMap") : document.kind === "architecture" ? t("diagram.architecture") : t("diagram.flowchart");
   const updatedLabel = formatDateTime(memo.updatedAt);
-  const currentMarkdown = historyOpen
+  const currentMarkdown = historyOpen && dirty
     ? serializeDiagramDocument(graphRef.current ? graphToDocument(graphRef.current, document.kind, themeRef.current) : document)
     : memo.contentMarkdown;
-  const saveStatus = saveError ? "error" : saving ? "saving" : dirty ? "unsaved" : "saved";
+  const saveStatus = saveError ? "error" : saving || notebookUpdatePending ? "saving" : editorDirty ? "unsaved" : "saved";
   const saveLabel = saveStatus === "error"
     ? t("editor.saveState.error")
     : saveStatus === "saving"
@@ -1958,62 +2228,22 @@ export const DiagramEditorPane = ({
     <TooltipProvider>
       <div className="flex h-full min-h-0 flex-col bg-white">
       <header className="shrink-0 border-b border-slate-200 bg-white">
-        <div className="flex min-h-12 items-center justify-between gap-2 border-b border-slate-100 px-3 py-2 sm:px-5">
-          <div className="flex min-w-0 items-center gap-2 text-sm">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button className="lg:hidden" size="icon" variant="ghost" aria-label={t("diagram.back")} onClick={() => dirty ? setConfirmDiscardOpen(true) : onBackToList()}>
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{t("diagram.back")}</TooltipContent>
-            </Tooltip>
-            <div className="hidden items-center gap-1 sm:flex lg:hidden">
+        <div className={MEMO_EDITOR_TOP_ROW_CLASS_NAME}>
+          <MemoEditorTopRowLeading
+            desktopFocusMode={desktopFocusMode}
+            updatedLabel={updatedLabel}
+            onToggleDesktopFocusMode={onToggleDesktopFocusMode}
+            mobileBackButton={(
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button size="icon" variant="ghost" aria-label={t("editor.previousMemo")} onClick={onOpenPreviousMemo} disabled={!hasPreviousMemo}>
-                    <ChevronLeft className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t("editor.previousMemo")}</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button size="icon" variant="ghost" aria-label={t("editor.nextMemo")} onClick={onOpenNextMemo} disabled={!hasNextMemo}>
-                    <ChevronRight className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t("editor.nextMemo")}</TooltipContent>
-              </Tooltip>
-            </div>
-            <div className="hidden items-center gap-1 lg:flex">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button size="icon" variant={desktopFocusMode ? "soft" : "ghost"} aria-label={t(desktopFocusMode ? "editor.exitFocusMode" : "editor.enterFocusMode")} aria-pressed={desktopFocusMode} onClick={onToggleDesktopFocusMode}>
-                    {desktopFocusMode ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t(desktopFocusMode ? "editor.exitFocusMode" : "editor.focusMode")}</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button size="icon" variant="ghost" aria-label={t("editor.previousMemo")} onClick={onOpenPreviousMemo} disabled={!hasPreviousMemo}>
+                  <Button className="lg:hidden" size="icon" variant="ghost" aria-label={t("diagram.back")} onClick={() => editorDirty ? setConfirmDiscardOpen(true) : onBackToList()}>
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>{t("editor.previousMemo")}</TooltipContent>
+                <TooltipContent>{t("diagram.back")}</TooltipContent>
               </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button size="icon" variant="ghost" aria-label={t("editor.nextMemo")} onClick={onOpenNextMemo} disabled={!hasNextMemo}>
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t("editor.nextMemo")}</TooltipContent>
-              </Tooltip>
-            </div>
-            <span className="hidden truncate text-xs text-slate-400 sm:inline">{updatedLabel}</span>
-          </div>
+            )}
+          />
 
           <div className="flex shrink-0 items-center gap-1">
             <m.span
@@ -2057,14 +2287,13 @@ export const DiagramEditorPane = ({
                 {t("diagram.retrySave")}
               </Button>
             )}
-            <ThemeToggle />
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button size="icon" variant="ghost" aria-label={t("editor.moreAria")}>
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48 border border-slate-200 bg-white py-1 shadow-md">
+            <MemoEditorHeaderActions
+              companionDiscoveryHub={companionDiscoveryHub}
+              moreMenuClassName="w-48"
+              onOpenExecutionCenter={onOpenExecutionCenter}
+              onSearch={openSearch}
+              moreMenuItems={(
+                <>
                 <DropdownMenuItem disabled={isLocalMemoId(memo.id)} onClick={() => void handleCopyMemoId()}>
                   <Copy className="h-4 w-4 text-slate-500" />
                   {t(isLocalMemoId(memo.id) ? "editor.copyNoteIdAfterSync" : "editor.copyNoteId")}
@@ -2112,118 +2341,156 @@ export const DiagramEditorPane = ({
                     {t("editor.deleteMemo")}
                   </DropdownMenuItem>
                 )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+                </>
+              )}
+            />
           </div>
         </div>
 
-        <div className="flex min-h-14 items-center gap-3 px-4 py-2.5 sm:px-7">
-          <input
-            className="min-w-0 flex-1 bg-transparent text-xl font-semibold text-slate-950 outline-none placeholder:text-slate-400 disabled:text-slate-600 sm:text-2xl"
-            value={title}
+        <div className={MEMO_EDITOR_TITLE_REGION_CLASS_NAME}>
+          <div className="min-w-0">
+            <MemoTitleInput
+              value={title}
+              readOnly={readOnly}
+              placeholder={kindLabel}
+              ariaLabel={t("diagram.title")}
+              onValueChange={(nextTitle) => {
+                titleRef.current = nextTitle;
+                setTitle(nextTitle);
+                setDirtyVersion((current) => current + 1);
+                const graph = graphRef.current;
+                if (graph) {
+                  setDirty(savedSnapshotRef.current !== diagramEditorSnapshot(
+                    nextTitle,
+                    graphToDocument(graph, document.kind, themeRef.current),
+                  ));
+                }
+              }}
+            />
+          </div>
+          <MemoEditorMetadataRow
+            contentMarkdown={memo.contentMarkdown}
             disabled={readOnly}
-            maxLength={160}
-            placeholder={kindLabel}
-            aria-label={t("diagram.title")}
-            onChange={(event) => {
-              const nextTitle = event.target.value;
-              titleRef.current = nextTitle;
-              setTitle(nextTitle);
+            mobileNotebookPickerOpen={mobileNotebookSheetOpen}
+            notebookOptions={notebookOptions}
+            notebookUpdatePending={notebookUpdatePending || saving}
+            repository={repository}
+            selectedNotebookId={memoRef.current.notebookId}
+            tagsText={tagsText}
+            title={title}
+            onMobileNotebookPickerOpenChange={setMobileNotebookSheetOpen}
+            onNotebookChange={handleNotebookChange}
+            onTagsChange={(nextTagsText) => {
+              tagsRef.current = nextTagsText;
+              setTagsText(nextTagsText);
+              setTagsDirty(true);
               setDirtyVersion((current) => current + 1);
-              const graph = graphRef.current;
-              if (graph) {
-                setDirty(savedSnapshotRef.current !== diagramEditorSnapshot(
-                  nextTitle,
-                  graphToDocument(graph, document.kind, themeRef.current),
-                ));
-              }
             }}
           />
-          <div className="shrink-0 rounded-full border border-[var(--brand-green-border)] bg-[var(--brand-green-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--brand-green-text)]">{kindLabel}</div>
         </div>
+        {searchOpen ? (
+          <EditorNoteSearchBar
+            inputRef={searchInputRef}
+            query={searchQuery}
+            replacement=""
+            replaceOpen={false}
+            readOnly
+            matchCount={searchMatches.length}
+            matchLabel={searchQuery.trim() ? `${searchMatches.length > 0 ? searchIndex + 1 : 0}/${searchMatches.length}` : ""}
+            onQueryChange={setSearchQuery}
+            onReplacementChange={() => undefined}
+            onMoveMatch={moveSearchMatch}
+            onReplaceAll={() => undefined}
+            onClose={() => setSearchOpen(false)}
+          />
+        ) : null}
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-slate-200 bg-white px-3 py-2">
-          {!readOnly && (
+        <DiagramToolbar
+          appearance={resolvedTheme}
+          canRedo={historyState.redo}
+          canUndo={historyState.undo}
+          hasSelection={hasSelection}
+          leading={!readOnly ? (
             document.kind === "mind-map" ? (
               <DiagramInsertMenu
-                icon={GitBranch}
-                label={t("diagram.addTopic")}
                 items={[
                   { icon: GitBranch, label: t("diagram.addTopic"), onSelect: () => addNode("topic", { relation: "child" }) },
                   { icon: ListTree, label: t("diagram.addSiblingTopic"), onSelect: () => addNode("topic", { relation: "sibling" }) },
                 ]}
               />
             ) : document.kind === "architecture" ? (
-              <>
-                <ArchitectureComponentLibrary
-                  onAdd={(item) => addNode(item.shape, {
-                    label: t(item.labelKey),
-                    resourceIcon: architectureResourceIcon(item),
-                  })}
-                  t={t}
-                />
-                <span className="hidden items-center gap-1.5 px-2 text-xs text-slate-500 xl:flex"><Link2 className="h-3.5 w-3.5" />{t("diagram.architectureConnectHint")}</span>
-              </>
+              <ArchitectureComponentLibrary
+                onPick={setPendingArchitectureItem}
+                t={t}
+              />
             ) : (
-              <>
-                <DiagramInsertMenu
-                  icon={Box}
-                  label={t("diagram.addStep")}
-                  items={[
-                    { icon: Box, label: t("diagram.addStep"), onSelect: () => addNode("process") },
-                    { icon: Diamond, label: t("diagram.addDecision"), onSelect: () => addNode("decision") },
-                    { icon: Circle, label: t("diagram.addTerminator"), onSelect: () => addNode("terminator") },
-                  ]}
-                />
-                <span className="hidden items-center gap-1.5 px-2 text-xs text-slate-500 xl:flex"><Link2 className="h-3.5 w-3.5" />{t("diagram.connectHint")}</span>
-              </>
+              <DiagramInsertMenu
+                items={[
+                  { icon: Box, label: t("diagram.addStep"), onSelect: () => addNode("process") },
+                  { icon: Diamond, label: t("diagram.addDecision"), onSelect: () => addNode("decision") },
+                  { icon: Circle, label: t("diagram.addTerminator"), onSelect: () => addNode("terminator") },
+                ]}
+              />
             )
+          ) : undefined}
+          onAutoLayout={applyAutoLayout}
+          onDeleteSelection={removeSelected}
+          onExport={exportDiagram}
+          onRedo={() => runHistoryAction("redo")}
+          onThemeChange={applyTheme}
+          onUndo={() => runHistoryAction("undo")}
+          zoomPercent={zoomPercent}
+          onRead={document.kind === "flowchart" ? () => { if (graphRef.current) readFlowchart(graphRef.current, document, containerRef.current); } : undefined}
+          onFit={() => { const graph = graphRef.current; if (graph) fitDiagramContent(graph, document, containerRef.current); }}
+          onResetZoom={() => {
+            const graph = graphRef.current;
+            if (!graph) return;
+            graph.zoomTo(1);
+            const bounds = graph.getCellsBBox(graph.getNodes().filter((node) => node.isVisible()));
+            if (bounds) graph.centerPoint(bounds.center.x, bounds.center.y);
+          }}
+          onZoomIn={() => graphRef.current?.zoom(0.1)}
+          onZoomOut={() => graphRef.current?.zoom(-0.1)}
+          readOnly={readOnly}
+          selectionEditor={(
+            <>
+              {selectedNodeId && !readOnly && (
+                <div className="ml-auto flex min-w-[220px] flex-1 items-center gap-2 sm:max-w-sm">
+                  <span className="shrink-0 text-xs font-medium text-slate-500">{t("diagram.nodeText")}</span>
+                  <Input value={selectedNodeLabel} maxLength={120} onChange={(event) => updateSelectedLabel(event.target.value)} />
+                </div>
+              )}
+              {selectedEdgeId && !readOnly && (
+                <div className="ml-auto flex min-w-[220px] flex-1 items-center gap-2 sm:max-w-sm">
+                  <span className="shrink-0 text-xs font-medium text-slate-500">{t("diagram.edgeText")}</span>
+                  <Input value={selectedEdgeLabel} maxLength={80} onChange={(event) => updateSelectedEdgeLabel(event.target.value)} />
+                </div>
+              )}
+            </>
           )}
-          <span className="mx-1 h-5 w-px bg-slate-200" />
-          <Tooltip><TooltipTrigger asChild><Button size="icon" variant="ghost" aria-label={t("diagram.undo")} disabled={!historyState.undo || readOnly} onClick={() => runHistoryAction("undo")}><Undo2 className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent>{t("diagram.undo")}</TooltipContent></Tooltip>
-          <Tooltip><TooltipTrigger asChild><Button size="icon" variant="ghost" aria-label={t("diagram.redo")} disabled={!historyState.redo || readOnly} onClick={() => runHistoryAction("redo")}><Redo2 className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent>{t("diagram.redo")}</TooltipContent></Tooltip>
-          {!readOnly && <Tooltip><TooltipTrigger asChild><Button size="icon" variant="ghost" aria-label={t("diagram.deleteSelection")} disabled={!hasSelection} onClick={removeSelected}><Trash2 className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent>{t("diagram.deleteSelection")}</TooltipContent></Tooltip>}
-          {!readOnly && <Tooltip><TooltipTrigger asChild><Button size="icon" variant="ghost" aria-label={t("diagram.autoLayout")} onClick={applyAutoLayout}><LayoutDashboard className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent>{t("diagram.autoLayout")}</TooltipContent></Tooltip>}
-          <span className="mx-1 h-5 w-px bg-slate-200" />
-          <Tooltip><TooltipTrigger asChild><Button size="icon" variant="ghost" aria-label={t("diagram.zoomOut")} onClick={() => graphRef.current?.zoom(-0.1)}><ZoomOut className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent>{t("diagram.zoomOut")}</TooltipContent></Tooltip>
-          <Tooltip><TooltipTrigger asChild><Button size="icon" variant="ghost" aria-label={t("diagram.zoomIn")} onClick={() => graphRef.current?.zoom(0.1)}><ZoomIn className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent>{t("diagram.zoomIn")}</TooltipContent></Tooltip>
-          <Tooltip><TooltipTrigger asChild><Button size="icon" variant="ghost" aria-label={t("diagram.fit")} onClick={() => { const graph = graphRef.current; if (graph) fitDiagramContent(graph, document, containerRef.current); }}><Maximize2 className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent>{t("diagram.fit")}</TooltipContent></Tooltip>
-          <Select value={theme} disabled={readOnly} onValueChange={(value) => applyTheme(value as DiagramTheme)}>
-            <SelectTrigger className="h-8 w-[8.5rem] gap-2" aria-label={t("diagram.theme")}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="brand" textValue={t("diagram.themeBrand")}><span className="flex items-center gap-2"><span className="h-3 w-3 rounded-full border border-black/10" style={{ background: resolveDiagramPalette("brand", resolvedTheme).topicFill }} />{t("diagram.themeBrand")}</span></SelectItem>
-              <SelectItem value="ocean" textValue={t("diagram.themeOcean")}><span className="flex items-center gap-2"><span className="h-3 w-3 rounded-full border border-black/10" style={{ background: resolveDiagramPalette("ocean", resolvedTheme).topicFill }} />{t("diagram.themeOcean")}</span></SelectItem>
-              <SelectItem value="ink" textValue={t("diagram.themeInk")}><span className="flex items-center gap-2"><span className="h-3 w-3 rounded-full border border-black/10" style={{ background: resolveDiagramPalette("ink", resolvedTheme).nodeFill }} />{t("diagram.themeInk")}</span></SelectItem>
-            </SelectContent>
-          </Select>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button size="sm" variant="outline"><Download className="h-4 w-4" />{t("diagram.export")}</Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={() => exportDiagram("png")}><FileImage className="h-4 w-4" />{t("diagram.exportPng")}</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => exportDiagram("svg")}><FileCode2 className="h-4 w-4" />{t("diagram.exportSvg")}</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          {selectedNodeId && !readOnly && (
-            <div className="ml-auto flex min-w-[220px] flex-1 items-center gap-2 sm:max-w-sm">
-              <span className="shrink-0 text-xs font-medium text-slate-500">{t("diagram.nodeText")}</span>
-              <Input value={selectedNodeLabel} maxLength={120} onChange={(event) => updateSelectedLabel(event.target.value)} />
-            </div>
-          )}
-          {selectedEdgeId && !readOnly && (
-            <div className="ml-auto flex min-w-[220px] flex-1 items-center gap-2 sm:max-w-sm">
-              <span className="shrink-0 text-xs font-medium text-slate-500">{t("diagram.edgeText")}</span>
-              <Input value={selectedEdgeLabel} maxLength={80} onChange={(event) => updateSelectedEdgeLabel(event.target.value)} />
-            </div>
-          )}
-        </div>
+          theme={theme}
+        />
         <div className="relative min-h-0 flex-1">
-          <div ref={containerRef} className="edgeever-diagram-canvas absolute inset-0 touch-none outline-none" data-diagram-appearance={resolvedTheme} data-diagram-kind={document.kind} data-diagram-theme={theme} tabIndex={0} aria-label={t("diagram.canvas", { type: kindLabel })} />
+          <div
+            ref={containerRef}
+            className={cn("edgeever-diagram-canvas absolute inset-0 touch-none outline-none", pendingArchitectureItem && "cursor-crosshair")}
+            data-architecture-placement={pendingArchitectureItem ? "active" : undefined}
+            data-diagram-appearance={resolvedTheme}
+            data-diagram-kind={document.kind}
+            data-diagram-theme={theme}
+            tabIndex={0}
+            aria-label={t("diagram.canvas", { type: kindLabel })}
+            onDragOver={handleArchitectureDragOver}
+            onDrop={handleArchitectureDrop}
+            onPointerDownCapture={handlePendingArchitecturePlacement}
+          />
+          {pendingArchitectureItem ? (
+            <div className="pointer-events-none absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-md border border-slate-200 bg-white/95 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm" role="status">
+              {t("diagram.placeShapeHint", { shape: t(pendingArchitectureItem.labelKey) })}
+            </div>
+          ) : null}
           {flowQuickCreate ? (
             <div
               className="absolute z-30 w-[330px] max-w-[calc(100%-24px)] rounded-xl border border-slate-200 bg-white p-2 shadow-xl"
