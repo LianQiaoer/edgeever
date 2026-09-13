@@ -1,16 +1,26 @@
 // Idempotent no-R2 transform for this deployment fork.
 // sync-edgeever-upstream.yml runs this after every upstream snapshot so the
 // Cloudflare deploy never requires an R2 bucket (this account has none).
+//
+// IMPORTANT: patched files are staged with "git add" because the publish step
+// runs a plain "git commit", which only records the index. Writing to the
+// worktree alone would silently drop these changes from the published commit.
+import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const NL = String.fromCharCode(10);
 const repo = process.cwd();
 
+const stage = (relPath) => {
+  execFileSync("git", ["add", "--", relPath], { cwd: repo });
+};
+
 function patch(relPath, label, isApplied, transform) {
   const file = resolve(repo, relPath);
   const source = readFileSync(file, "utf8");
   if (isApplied(source)) {
+    stage(relPath);
     console.log("[no-r2] skip " + label);
     return;
   }
@@ -19,6 +29,7 @@ function patch(relPath, label, isApplied, transform) {
     throw new Error("[no-r2] anchor missing for " + label);
   }
   writeFileSync(file, next);
+  stage(relPath);
   console.log("[no-r2] applied " + label);
 }
 
